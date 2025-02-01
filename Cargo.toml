@@ -1,0 +1,10 @@
+[package]
+name = "pptx-parser"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.95"
+zip = "2.2.2"
+roxmltree = "0.20.0"
+thiserror = "2.0.11"
