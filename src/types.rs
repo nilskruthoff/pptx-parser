@@ -9,16 +9,23 @@ pub struct Slide {
 #[derive(Debug)]
 pub enum SlideElement {
     Text(TextElement),
+    Unknown,
 }
 #[derive(Debug)]
 pub struct TextElement {
-    pub text: String,
-    pub formatting: Formatting,
+    pub runs: Vec<Run>,
 }
+
 #[derive(Debug, Default)]
 pub struct Formatting {
     pub bold: bool,
     pub italic: bool,
-    pub underline: bool,
-    pub strikethrough: bool,
+    pub underlined: bool,
+    pub lang: String,
+}
+
+#[derive(Debug)]
+pub struct Run {
+    pub text: String,
+    pub formatting: Formatting,
 }

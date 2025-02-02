@@ -37,11 +37,13 @@ impl PptxContainer {
 
 impl PptxContainer {
     pub fn get_slide_paths(&self) -> Vec<String> {
-        self.files
+        let mut slides: Vec<String> = self.files
             .keys()
             .filter(|key| key.starts_with("ppt/slides/slide") && key.ends_with(".xml"))
             .cloned()
-            .collect()
+            .collect();
+        slides.sort();
+        slides
     }
 
     pub fn read_slide_by_path(&self, path: &str) -> Result<&[u8]> {
