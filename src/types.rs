@@ -29,3 +29,9 @@ pub struct Run {
     pub text: String,
     pub formatting: Formatting,
 }
+
+impl Run {
+    pub fn extract(&self) -> String {
+        self.text.to_string()
+    }
+}
