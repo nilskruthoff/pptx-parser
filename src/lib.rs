@@ -2,9 +2,10 @@ mod container;
 mod slide;
 mod types;
 mod constants;
+mod parse_xml;
 
 pub use container::PptxContainer;
-pub use slide::parse_slide_xml;
+pub use slide::Slide;
 pub use types::*;
 
 #[derive(Debug, thiserror::Error)]
