@@ -33,7 +33,6 @@ impl PptxContainer {
         let slide_paths = self.get_slide_paths();
 
         for path in slide_paths {
-            println!("{}", &path);
             let slide_data = self.read_slide_by_path(&path)?;
             let slide = Slide::parse(slide_data, path)?;
             slides.push(slide);

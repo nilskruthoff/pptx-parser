@@ -9,6 +9,7 @@ pub struct Slide {
 #[derive(Debug)]
 pub enum SlideElement {
     Text(TextElement),
+    Table(TableElement),
     Unknown,
 }
 #[derive(Debug)]
@@ -34,4 +35,19 @@ impl Run {
     pub fn extract(&self) -> String {
         self.text.to_string()
     }
+}
+
+#[derive(Debug)]
+pub struct TableElement {
+    pub rows: Vec<TableRow>,
+}
+
+#[derive(Debug)]
+pub struct TableRow {
+    pub cells: Vec<TableCell>,
+}
+
+#[derive(Debug)]
+pub struct TableCell {
+    pub runs: Vec<Run>,
 }

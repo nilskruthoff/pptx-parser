@@ -1,4 +1,4 @@
-﻿use crate::types::{Slide, SlideElement, TextElement};
+﻿use crate::types::{SlideElement, TextElement, TableElement, TableRow, TableCell};
 use crate::constants::{P_NAMESPACE, A_NAMESPACE};
 use roxmltree::{Document, Node};
 use crate::{Result, Error, Formatting, Run};
@@ -30,6 +30,11 @@ pub fn parse_slide_xml(xml_data: &[u8]) -> Result<Vec<SlideElement>> {
                     let slide = parse_sp(&child_node)?;
                     elements.push(slide);
                 },
+                "graphicFrame" => {
+                    if let Some(element) = parse_graphic_frame(&child_node)? {
+                        elements.push(element);
+                    }
+                },
                 _ => {
                     elements.push(Unknown)
                 }
@@ -42,11 +47,15 @@ pub fn parse_slide_xml(xml_data: &[u8]) -> Result<Vec<SlideElement>> {
 
 fn parse_sp(sp_node: &Node) -> Result<SlideElement> {
     // Search for <p:txBody> element
-    let tx_body_node = sp_node.children().find(|n| {
+    let tx_body_node = if let Some(node) = sp_node.children().find(|n| {
         n.is_element()
             && n.tag_name().name() == "txBody"
             && n.tag_name().namespace() == Some(P_NAMESPACE)
-    }).ok_or(Error::ParseError("txBody node not found"))?;
+    }) {
+        node
+    } else {
+        return Ok(Unknown);
+    };
 
     let mut runs = Vec::new();
     // Iterate over <a:p> elements within txBody nodes
@@ -109,4 +118,80 @@ fn parse_run(r_node: &Node) -> Result<Run> {
         }
     }
     Ok(Run { text, formatting })
+}
+
+fn parse_graphic_frame(node: &Node) -> Result<Option<SlideElement>> {
+    // Suche nach <a:graphicData> mit Tabellen-URI
+    let graphic_data_node = node
+        .descendants()
+        .find(|n| {
+            n.is_element()
+                && n.tag_name().name() == "graphicData"
+                && n.tag_name().namespace() == Some(A_NAMESPACE)
+                && n.attribute("uri") == Some("http://schemas.openxmlformats.org/drawingml/2006/table")
+        });
+
+    if let Some(graphic_data) = graphic_data_node {
+        // Suche nach <a:tbl> innerhalb von <a:graphicData>
+        if let Some(tbl_node) = graphic_data
+            .children()
+            .find(|n| n.is_element() && n.tag_name().name() == "tbl" && n.tag_name().namespace() == Some(A_NAMESPACE))
+        {
+            let table = parse_table(&tbl_node)?;
+            return Ok(Some(SlideElement::Table(table)));
+        }
+    }
+
+    Ok(None)
+}
+
+fn parse_table(tbl_node: &Node) -> Result<TableElement> {
+    let mut rows = Vec::new();
+
+    for tr_node in tbl_node.children().filter(|n| {
+        n.is_element()
+            && n.tag_name().name() == "tr"
+            && n.tag_name().namespace() == Some(A_NAMESPACE)
+    }) {
+        let row = parse_table_row(&tr_node)?;
+        rows.push(row);
+    }
+
+    Ok(TableElement { rows })
+}
+
+fn parse_table_row(tr_node: &Node) -> Result<TableRow> {
+    let mut cells = Vec::new();
+
+    for tc_node in tr_node.children().filter(|n| {
+        n.is_element()
+            && n.tag_name().name() == "tc"
+            && n.tag_name().namespace() == Some(A_NAMESPACE)
+    }) {
+        let cell = parse_table_cell(&tc_node)?;
+        cells.push(cell);
+    }
+
+    Ok(TableRow { cells })
+}
+
+fn parse_table_cell(tc_node: &Node) -> Result<TableCell> {
+    let mut runs = Vec::new();
+
+    if let Some(tx_body_node) = tc_node.children().find(|n| {
+        n.is_element()
+            && n.tag_name().name() == "txBody"
+            && n.tag_name().namespace() == Some(A_NAMESPACE)
+    }) {
+        for p_node in tx_body_node.children().filter(|n| {
+            n.is_element()
+                && n.tag_name().name() == "p"
+                && n.tag_name().namespace() == Some(A_NAMESPACE)
+        }) {
+            let mut paragraph_runs = parse_paragraph(&p_node)?;
+            runs.append(&mut paragraph_runs);
+        }
+    }
+
+    Ok(TableCell { runs })
 }

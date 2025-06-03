@@ -7,6 +7,19 @@ fn test_parse_pptx() -> Result<(), Error> {
     let slides = pptx.parse()?;
     Ok(())
 }
+
+#[test]
+fn test_extract_text() -> Result<(), Error> {
+    let path = std::path::Path::new("test-data/sample2.pptx");
+    let pptx = PptxContainer::open(path)?;
+    let slides = pptx.parse()?;
+    for slide in slides {
+        if let Some(md) = slide.extract_text() {
+            println!("{}", md);
+        }
+    }
+    Ok(())
+}
 // #[test]
 // fn test_parse_slide_text() -> Result<(), Error> {
 //     let path = std::path::Path::new("test-data/sample.pptx");
