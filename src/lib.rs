@@ -3,6 +3,7 @@ mod slide;
 mod types;
 mod constants;
 mod parse_xml;
+mod parse_rels;
 
 pub use container::PptxContainer;
 pub use slide::Slide;
@@ -27,6 +28,9 @@ pub enum Error {
 
     #[error("Parse error: {0}")]
     ParseError(&'static str),
+
+    #[error("Image not found")]
+    ImageNotFound,
 
     #[error("Unbekannter Fehler")]
     Unknown,

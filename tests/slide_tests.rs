@@ -1,4 +1,6 @@
-﻿use pptx_parser::{Error, PptxContainer, SlideElement};
+﻿use std::fs::File;
+use std::io::Write;
+use pptx_parser::{Error, PptxContainer, SlideElement};
 
 #[test]
 fn test_parse_pptx() -> Result<(), Error> {
@@ -10,14 +12,22 @@ fn test_parse_pptx() -> Result<(), Error> {
 
 #[test]
 fn test_extract_text() -> Result<(), Error> {
-    let path = std::path::Path::new("test-data/sample2.pptx");
+    let path = std::path::Path::new("test-data/pic.pptx");
     let pptx = PptxContainer::open(path)?;
     let slides = pptx.parse()?;
     for slide in slides {
         if let Some(md) = slide.extract_text() {
             println!("{}", md);
         }
+
+        if let Some(images) = slide.extract_images_as_base64() {
+            for (index, base64_image) in images.iter().enumerate() {
+                let mut file = File::create(format!("slide-{}_output-{}.txt", &slide.slide_number , index + 1))?;
+                file.write_all(base64_image.as_bytes())?;
+            }
+        }
     }
+
     Ok(())
 }
 // #[test]

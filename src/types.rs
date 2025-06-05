@@ -2,16 +2,26 @@
 pub struct Presentation {
     pub slides: Vec<Slide>,
 }
+
 #[derive(Debug)]
 pub struct Slide {
     pub elements: Vec<SlideElement>,
 }
+
 #[derive(Debug)]
 pub enum SlideElement {
     Text(TextElement),
     Table(TableElement),
+    Image(ImageReference),
     Unknown,
 }
+
+#[derive(Debug)]
+pub struct ImageReference {
+    pub id: String,
+    pub target: String,
+}
+
 #[derive(Debug)]
 pub struct TextElement {
     pub runs: Vec<Run>,

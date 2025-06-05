@@ -1,7 +1,7 @@
 ﻿use crate::types::{SlideElement, TextElement, TableElement, TableRow, TableCell};
 use crate::constants::{P_NAMESPACE, A_NAMESPACE};
 use roxmltree::{Document, Node};
-use crate::{Result, Error, Formatting, Run};
+use crate::{Result, Error, Formatting, Run, ImageReference};
 use crate::SlideElement::Unknown;
 
 pub fn parse_slide_xml(xml_data: &[u8]) -> Result<Vec<SlideElement>> {
@@ -194,4 +194,28 @@ fn parse_table_cell(tc_node: &Node) -> Result<TableCell> {
     }
 
     Ok(TableCell { runs })
+}
+
+fn parse_pic(pic_node: &Node) -> Result<SlideElement> {
+    let blip_fill_node = pic_node
+        .descendants()
+        .find(|n| n.tag_name().name() == "blipFill")
+        .ok_or(Error::Unknown)?;
+
+    let blip_node = blip_fill_node
+        .descendants()
+        .find(|n| n.tag_name().name() == "blip")
+        .ok_or(Error::Unknown)?;
+
+    let embed_attr = blip_node.attribute(("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "embed"))
+        .or_else(|| blip_node.attribute("r:embed"));
+
+    if let Some(embed) = embed_attr {
+        Ok(SlideElement::Image(ImageReference {
+            id: embed.to_string(),
+            target: String::new(), // Wird später verknüpft
+        }))
+    } else {
+        Ok(SlideElement::Unknown)
+    }
 }
