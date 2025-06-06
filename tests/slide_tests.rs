@@ -15,9 +15,10 @@ fn test_extract_text() -> Result<(), Error> {
     let path = std::path::Path::new("test-data/pic.pptx");
     let pptx = PptxContainer::open(path)?;
     let slides = pptx.parse()?;
+    let mut md_file = File::create("output.md")?;
     for slide in slides {
-        if let Some(md) = slide.extract_text() {
-            println!("{}", md);
+        if let Some(md) = slide.convert_to_md() {
+            writeln!(md_file, "{}", md).expect("TODO: panic message");
         }
 
         if let Some(images) = slide.extract_images_as_base64() {

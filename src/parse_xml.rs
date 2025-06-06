@@ -1,5 +1,5 @@
 ﻿use crate::types::{SlideElement, TextElement, TableElement, TableRow, TableCell};
-use crate::constants::{P_NAMESPACE, A_NAMESPACE};
+use crate::constants::{P_NAMESPACE, A_NAMESPACE, RELS_NAMESPACE};
 use roxmltree::{Document, Node};
 use crate::{Result, Error, Formatting, Run, ImageReference};
 use crate::SlideElement::Unknown;
@@ -34,6 +34,10 @@ pub fn parse_slide_xml(xml_data: &[u8]) -> Result<Vec<SlideElement>> {
                     if let Some(element) = parse_graphic_frame(&child_node)? {
                         elements.push(element);
                     }
+                },
+                "pic" => {
+                    let image_element = parse_pic(&child_node)?;
+                    elements.push(image_element);
                 },
                 _ => {
                     elements.push(Unknown)
@@ -197,25 +201,19 @@ fn parse_table_cell(tc_node: &Node) -> Result<TableCell> {
 }
 
 fn parse_pic(pic_node: &Node) -> Result<SlideElement> {
-    let blip_fill_node = pic_node
+    let blip_node = pic_node
         .descendants()
-        .find(|n| n.tag_name().name() == "blipFill")
+        .find(|n| n.is_element() && n.tag_name().name() == "blip" && n.tag_name().namespace() == Some(A_NAMESPACE))
         .ok_or(Error::Unknown)?;
 
-    let blip_node = blip_fill_node
-        .descendants()
-        .find(|n| n.tag_name().name() == "blip")
+    let embed_attr = blip_node.attribute((RELS_NAMESPACE, "embed"))
+        .or_else(|| blip_node.attribute("r:embed"))
         .ok_or(Error::Unknown)?;
 
-    let embed_attr = blip_node.attribute(("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "embed"))
-        .or_else(|| blip_node.attribute("r:embed"));
+    let image_ref = ImageReference {
+        id: embed_attr.to_string(),
+        target: String::new(),
+    };
 
-    if let Some(embed) = embed_attr {
-        Ok(SlideElement::Image(ImageReference {
-            id: embed.to_string(),
-            target: String::new(), // Wird später verknüpft
-        }))
-    } else {
-        Ok(SlideElement::Unknown)
-    }
+    Ok(SlideElement::Image(image_ref))
 }

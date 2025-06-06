@@ -44,7 +44,7 @@ impl<'a> Slide<'a> {
             .and_then(|num_str| num_str.parse::<u32>().ok())
     }
 
-    pub fn extract_text(&self) -> Option<String> {
+    pub fn convert_to_md(&self) -> Option<String> {
         let mut slide_txt = String::new();
 
         for element in &self.elements {
@@ -82,23 +82,38 @@ impl<'a> Slide<'a> {
                     }
                     slide_txt.push('\n');
                 },
+                SlideElement::Image(image_ref) => {
+                    let image_path = self.get_full_image_path(&image_ref.target);
+                    
+                    if let Some(image_data) = self.files.get(&image_path) {
+                        let base64_string = general_purpose::STANDARD.encode(image_data);
+                        let image_name = &image_ref.target.split('/').last()?;
+                        let file_ext = &image_name.split('.').last()?;
+                        slide_txt.push_str(format!("![{}](data:image/{};base64,{}\n)", image_name, file_ext, base64_string).as_str());
+                    }
+                    
+                    slide_txt.push('\n');
+                }
                 _ => ()
             }
         }
         Some(slide_txt)
     }
+    
 
     pub fn extract_images_as_base64(&self) -> Option<Vec<String>> {
         let mut images_base64 = Vec::new();
 
-        for image_ref in &self.images {
-            let image_path = self.get_full_image_path(&image_ref.target);
+        for element in &self.elements {
+            if let SlideElement::Image(image_ref) = element {
+                let image_path = self.get_full_image_path(&image_ref.target);
 
-            if let Some(image_data) = self.files.get(&image_path) {
-                let base64_string = general_purpose::STANDARD.encode(image_data);
-                images_base64.push(base64_string);
-            } else {
-                return None;
+                if let Some(image_data) = self.files.get(&image_path) {
+                    let base64_string = general_purpose::STANDARD.encode(image_data);
+                    images_base64.push(base64_string);
+                } else {
+                    return None;
+                }
             }
         }
 
