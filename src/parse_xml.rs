@@ -1,7 +1,7 @@
 ﻿use crate::types::{SlideElement, TextElement, TableElement, TableRow, TableCell};
 use crate::constants::{P_NAMESPACE, A_NAMESPACE, RELS_NAMESPACE};
 use roxmltree::{Document, Node};
-use crate::{Result, Error, Formatting, Run, ImageReference};
+use crate::{Result, Error, Formatting, Run, ImageReference, ListItem, ListElement};
 use crate::SlideElement::Unknown;
 
 pub fn parse_slide_xml(xml_data: &[u8]) -> Result<Vec<SlideElement>> {
@@ -50,44 +50,73 @@ pub fn parse_slide_xml(xml_data: &[u8]) -> Result<Vec<SlideElement>> {
 }
 
 fn parse_sp(sp_node: &Node) -> Result<SlideElement> {
-    // Search for <p:txBody> element
-    let tx_body_node = if let Some(node) = sp_node.children().find(|n| {
+    // Suche nach dem <p:txBody>-Element
+    let tx_body_node = sp_node.children().find(|n| {
         n.is_element()
             && n.tag_name().name() == "txBody"
             && n.tag_name().namespace() == Some(P_NAMESPACE)
-    }) {
-        node
-    } else {
-        return Ok(Unknown);
-    };
+    }).ok_or(Error::Unknown)?;
 
+    // Überprüfen, ob der Inhalt eine Liste ist
+    let is_list = tx_body_node.descendants().any(|n| {
+        n.is_element()
+            && n.tag_name().name() == "pPr"
+            && n.tag_name().namespace() == Some(A_NAMESPACE)
+            && (
+            n.attribute("lvl").is_some() || // Prüfen auf Listenebene
+                n.children().any(|child| {
+                    child.is_element() && (
+                        child.tag_name().name() == "buAutoNum" || // Geordnete Liste
+                            child.tag_name().name() == "buChar"       // Ungeordnete Liste
+                    )
+                })
+        )
+    });
+
+    if is_list {
+        parse_list(&tx_body_node)
+    } else {
+        parse_text(&tx_body_node)
+    }
+}
+
+fn parse_text(tx_body_node: &Node) -> Result<SlideElement> {
     let mut runs = Vec::new();
-    // Iterate over <a:p> elements within txBody nodes
+    // Iteriere über <a:p>-Elemente innerhalb von txBody
     for p_node in tx_body_node.children().filter(|n| {
         n.is_element()
             && n.tag_name().name() == "p"
             && n.tag_name().namespace() == Some(A_NAMESPACE)
     }) {
         let mut paragraph_runs = parse_paragraph(&p_node)?;
-        runs.append(&mut paragraph_runs); // collect all runs in every paragraph node
+        runs.append(&mut paragraph_runs);
     }
 
     Ok(SlideElement::Text(TextElement { runs }))
 }
-fn parse_paragraph(p_node: &Node) -> Result<Vec<Run>> {
-    let mut runs: Vec<Run> = Vec::new();
 
-    // iterate over <a:r> elements within paragraph elements
-    for r_node in p_node.children().filter(|n| {
+fn parse_paragraph(p_node: &Node) -> Result<Vec<Run>> {
+    let run_nodes: Vec<_> = p_node.children().filter(|n| {
         n.is_element()
             && n.tag_name().name() == "r"
             && n.tag_name().namespace() == Some(A_NAMESPACE)
-    }) {
-        let run = parse_run(&r_node)?;
+    }).collect();
+
+    let count = run_nodes.len();
+    let mut runs: Vec<Run> = Vec::new();
+
+    for (idx, r_node) in run_nodes.iter().enumerate() {
+        let mut run = parse_run(r_node)?;
+
+        if idx == count - 1 {
+            run.text.push('\n');
+        }
+
         runs.push(run);
     }
     Ok(runs)
 }
+
 fn parse_run(r_node: &Node) -> Result<Run> {
     let mut text = String::new();
     let mut formatting = Formatting::default();
@@ -216,4 +245,51 @@ fn parse_pic(pic_node: &Node) -> Result<SlideElement> {
     };
 
     Ok(SlideElement::Image(image_ref))
+}
+
+fn parse_list(tx_body_node: &Node) -> Result<SlideElement> {
+    let mut items = Vec::new();
+
+    for p_node in tx_body_node.children().filter(|n| {
+        n.is_element()
+            && n.tag_name().name() == "p"
+            && n.tag_name().namespace() == Some(A_NAMESPACE)
+    }) {
+        // Parsen der Listeneigenschaften
+        let (level, is_ordered) = parse_list_properties(&p_node)?;
+
+        // Parsen der Runs im Absatz
+        let runs = parse_paragraph(&p_node)?;
+
+        items.push(ListItem { level, is_ordered, runs });
+    }
+
+    Ok(SlideElement::List(ListElement { items }))
+}
+
+fn parse_list_properties(p_node: &Node) -> Result<(u32, bool)> {
+    let mut level = 0;
+    let mut is_ordered = false;
+
+    if let Some(pPr_node) = p_node.children().find(|n| {
+        n.is_element()
+            && n.tag_name().name() == "pPr"
+            && n.tag_name().namespace() == Some(A_NAMESPACE)
+    }) {
+        if let Some(lvl_attr) = pPr_node.attribute("lvl") {
+            level = lvl_attr.parse::<u32>().unwrap_or(0);
+        }
+
+        is_ordered = pPr_node.children().any(|n| {
+            n.is_element() && n.tag_name().namespace() == Some(A_NAMESPACE) && n.tag_name().name() == "buAutoNum"
+        });
+
+        if !is_ordered {
+            is_ordered = pPr_node.children().any(|n| {
+                n.is_element() && n.tag_name().namespace() == Some(A_NAMESPACE) && n.tag_name().name() == "buChar"
+            });
+        }
+    }
+
+    Ok((level, is_ordered))
 }

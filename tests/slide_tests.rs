@@ -11,6 +11,22 @@ fn test_parse_pptx() -> Result<(), Error> {
 }
 
 #[test]
+fn test_parse_lists() -> Result<(), Error> {
+    let path = std::path::Path::new("test-data/listtest.pptx");
+    let pptx = PptxContainer::open(path)?;
+    let slides = pptx.parse()?;
+
+    let mut md_file = File::create("output-list.md")?;
+    
+    for slide in slides {
+        if let Some(md) = slide.convert_to_md() {
+            writeln!(md_file, "{}", md).expect("TODO: panic message");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn test_extract_text() -> Result<(), Error> {
     let path = std::path::Path::new("test-data/pic.pptx");
     let pptx = PptxContainer::open(path)?;

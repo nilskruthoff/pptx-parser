@@ -46,6 +46,7 @@ impl<'a> Slide<'a> {
 
     pub fn convert_to_md(&self) -> Option<String> {
         let mut slide_txt = String::new();
+        slide_txt.push_str(format!("<!-- Slide {} -->\n\n", self.slide_number).as_str());
 
         for element in &self.elements {
             match element {
@@ -93,7 +94,42 @@ impl<'a> Slide<'a> {
                     }
                     
                     slide_txt.push('\n');
-                }
+                },
+                SlideElement::List(list_element) => {
+                    // Vektor, um die Zähler für jede Ebene zu speichern
+                    let mut counters: Vec<usize> = Vec::new();
+                    let mut previous_level = 0;
+
+                    for item in &list_element.items {
+                        let mut item_text = String::new();
+                        for run in &item.runs {
+                            item_text.push_str(&run.extract());
+                        }
+
+                        let level = item.level as usize;
+                        if level >= counters.len() {
+                            counters.resize(level + 1, 0);
+                        }
+
+                        if level > previous_level {
+                            counters[level] = 0;
+                        } else if level < previous_level {
+                            counters.truncate(level + 1);
+                        }
+
+                        counters[level] += 1;
+                        previous_level = level;
+
+                        let indent = "\t".repeat(level);
+                        let marker = if item.is_ordered {
+                            format!("{}{}. ", indent, counters[level])
+                        } else {
+                            format!("{}- ", indent)
+                        };
+
+                        slide_txt.push_str(&format!("{}{}\n", marker, item_text));
+                    }
+                },
                 _ => ()
             }
         }
