@@ -93,7 +93,24 @@ impl<'a> Slide<'a> {
                     }
                     
                     slide_txt.push('\n');
-                }
+                },
+                SlideElement::List(list_element) => {
+                    for item in &list_element.items {
+                        let mut item_text = String::new();
+                        for run in &item.runs {
+                            item_text.push_str(&run.extract());
+                        }
+
+                        let indent = "\t".repeat(item.level as usize);
+                        let marker = if item.is_ordered {
+                            format!("{}{}. ", indent, 1)
+                        } else {
+                            format!("{}- ", indent)
+                        };
+
+                        slide_txt.push_str(&format!("{}{}\n", marker, item_text));
+                    }
+                },
                 _ => ()
             }
         }

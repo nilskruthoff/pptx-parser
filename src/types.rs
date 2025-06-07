@@ -13,6 +13,7 @@ pub enum SlideElement {
     Text(TextElement),
     Table(TableElement),
     Image(ImageReference),
+    List(ListElement),
     Unknown,
 }
 
@@ -59,5 +60,17 @@ pub struct TableRow {
 
 #[derive(Debug)]
 pub struct TableCell {
+    pub runs: Vec<Run>,
+}
+
+#[derive(Debug)]
+pub struct ListElement {
+    pub items: Vec<ListItem>,
+}
+
+#[derive(Debug)]
+pub struct ListItem {
+    pub level: u32,
+    pub is_ordered: bool,
     pub runs: Vec<Run>,
 }
