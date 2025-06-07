@@ -1,20 +1,35 @@
-﻿use std::string::ParseError;
-use crate::SlideElement;
+﻿use super::Error;
 use crate::parse_xml;
-use super::{Error, };
+use crate::{parse_rels, ImageReference, SlideElement};
+use base64::{engine::general_purpose, Engine as _};
+use std::collections::HashMap;
 
 #[derive(Debug)]
-pub struct Slide {
+pub struct Slide<'a> {
     pub rel_path: String,
     pub slide_number: u32,
-    pub elements: Vec<SlideElement>
+    pub elements: Vec<SlideElement>,
+    pub images: Vec<ImageReference>,
+    files: &'a HashMap<String, Vec<u8>>,
 }
 
-impl Slide {
-    pub fn parse(xml: &[u8], rel_path: String) -> Result<Slide, Error> {
+impl<'a> Slide<'a> {
+    pub fn parse(
+        xml: &[u8],
+        rel_path: String,
+        rels_data: Option<&[u8]>,
+        files: &'a HashMap<String, Vec<u8>>,
+    ) -> Result<Slide<'a>, Error> {
         let slide_number = Self::extract_slide_number(&rel_path).unwrap_or(0);
-        let elements: Vec<SlideElement> = parse_xml::parse_slide_xml(&xml)?;
-        Ok(Slide { rel_path, slide_number, elements })
+        let elements: Vec<SlideElement> = parse_xml::parse_slide_xml(xml)?;
+
+        let images = if let Some(rels_data) = rels_data {
+            parse_rels::parse_slide_rels(rels_data)?
+        } else {
+            Vec::new()
+        };
+
+        Ok(Slide { rel_path, slide_number, elements, images, files })
     }
 
     fn extract_slide_number(path: &str) -> Option<u32> {
@@ -29,7 +44,7 @@ impl Slide {
             .and_then(|num_str| num_str.parse::<u32>().ok())
     }
 
-    pub fn extract_text(&self) -> Option<String> {
+    pub fn convert_to_md(&self) -> Option<String> {
         let mut slide_txt = String::new();
 
         for element in &self.elements {
@@ -67,9 +82,65 @@ impl Slide {
                     }
                     slide_txt.push('\n');
                 },
+                SlideElement::Image(image_ref) => {
+                    let image_path = self.get_full_image_path(&image_ref.target);
+                    
+                    if let Some(image_data) = self.files.get(&image_path) {
+                        let base64_string = general_purpose::STANDARD.encode(image_data);
+                        let image_name = &image_ref.target.split('/').last()?;
+                        let file_ext = &image_name.split('.').last()?;
+                        slide_txt.push_str(format!("![{}](data:image/{};base64,{}\n)", image_name, file_ext, base64_string).as_str());
+                    }
+                    
+                    slide_txt.push('\n');
+                }
                 _ => ()
             }
         }
         Some(slide_txt)
+    }
+    
+
+    pub fn extract_images_as_base64(&self) -> Option<Vec<String>> {
+        let mut images_base64 = Vec::new();
+
+        for element in &self.elements {
+            if let SlideElement::Image(image_ref) = element {
+                let image_path = self.get_full_image_path(&image_ref.target);
+
+                if let Some(image_data) = self.files.get(&image_path) {
+                    let base64_string = general_purpose::STANDARD.encode(image_data);
+                    images_base64.push(base64_string);
+                } else {
+                    return None;
+                }
+            }
+        }
+
+        Some(images_base64)
+    }
+
+    fn get_full_image_path(&self, target: &str) -> String {
+        if target.starts_with("../") {
+            let adjusted_target = target.trim_start_matches("../");
+            format!("ppt/{}", adjusted_target)
+        } else {
+            format!("ppt/slides/{}", target)
+        }
+    }
+
+    pub fn link_images(&mut self) {
+        let id_to_target: HashMap<String, String> = self.images
+            .iter()
+            .map(|img_ref| (img_ref.id.clone(), img_ref.target.clone()))
+            .collect();
+
+        for element in &mut self.elements {
+            if let SlideElement::Image(ref mut img_ref) = element {
+                if let Some(target) = id_to_target.get(&img_ref.id) {
+                    img_ref.target = target.clone();
+                }
+            }
+        }
     }
 }
