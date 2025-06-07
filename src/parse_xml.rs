@@ -276,15 +276,14 @@ fn parse_list_properties(p_node: &Node) -> Result<(u32, bool)> {
             && n.tag_name().name() == "pPr"
             && n.tag_name().namespace() == Some(A_NAMESPACE)
     }) {
-        // Extrahieren der Listenebene
         if let Some(lvl_attr) = pPr_node.attribute("lvl") {
             level = lvl_attr.parse::<u32>().unwrap_or(0);
         }
-        // Überprüfen, ob es sich um eine geordnete Liste handelt
+
         is_ordered = pPr_node.children().any(|n| {
             n.is_element() && n.tag_name().namespace() == Some(A_NAMESPACE) && n.tag_name().name() == "buAutoNum"
         });
-        // Überprüfen auf ungeordnete Liste, falls nicht geordnet
+
         if !is_ordered {
             is_ordered = pPr_node.children().any(|n| {
                 n.is_element() && n.tag_name().namespace() == Some(A_NAMESPACE) && n.tag_name().name() == "buChar"

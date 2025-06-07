@@ -12,7 +12,7 @@ fn test_parse_pptx() -> Result<(), Error> {
 
 #[test]
 fn test_parse_lists() -> Result<(), Error> {
-    let path = std::path::Path::new("test-data/sample.pptx");
+    let path = std::path::Path::new("test-data/listtest.pptx");
     let pptx = PptxContainer::open(path)?;
     let slides = pptx.parse()?;
 
