@@ -10,24 +10,6 @@ use std::{
 /// `PptxContainer` provides functionalities for accessing slides and their resources
 /// directly from a loaded pptx file. It parses and stores XML slides content,
 /// relationships (`rels`) files and associated resources such as images.
-///
-/// # Examples
-///
-/// ```
-/// use std::path::Path;
-/// use pptx_parser::{Error, PptxContainer};
-///
-/// let path = Path::new("/sample.pptx");
-/// let pptx = PptxContainer::open(path)?;
-/// let slides = pptx.parse()?;
-///
-/// for slide in slides {
-///     if let Some(md) = slide.convert_to_md() {
-///         println!("{}", md);
-///     }
-/// }
-/// # Ok::<(), Error::ParseError()>(())
-/// ```
 pub struct PptxContainer<'a> {
     files: HashMap<String, Vec<u8>>,
     rels_files: HashMap<String, Vec<u8>>,

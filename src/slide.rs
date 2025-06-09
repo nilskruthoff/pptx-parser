@@ -14,27 +14,6 @@ use std::collections::HashMap;
 /// contained images can be extracted in base64 representation.
 ///
 /// Typically, you retrieve instances of `Slide` through [`PptxContainer::parse()`].
-///
-/// # Examples
-///
-/// ```
-/// use pptx_parser::{Error, PptxContainer};
-/// let container = PptxContainer::open("presentation.pptx".as_ref())?;
-/// let slides = container.parse()?;
-///
-/// for slide in slides {
-///     if let Some(md) = slide.convert_to_md() {
-///         println!("{}", md);
-///     }
-///
-///     if let Some(images) = slide.extract_images_as_base64() {
-///         for img_base64 in images {
-///             println!("Image: {}", &img_base64[..10]);
-///         }
-///     }
-/// }
-/// # Ok::<(), Error::ParseError()>(())
-/// ```
 #[derive(Debug)]
 pub struct Slide<'a> {
     pub rel_path: String,

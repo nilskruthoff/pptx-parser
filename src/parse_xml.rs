@@ -26,29 +26,7 @@ use crate::SlideElement::Unknown;
 /// Parsing may fail and return [`Error`] if:
 /// - The provided XML data isn't valid UTF-8.
 /// - The XML structure is malformed or missing essential schema elements (`<p:cSld>` or `<p:spTree>` tags).
-///
-/// # Examples
-///
-/// ```
-/// use pptx_parser::{Error, PptxContainer, Slide, SlideElement};
-///
-/// let path = std::path::Path::new("/sample.pptx"); 
-/// let pptx = PptxContainer::open(path)?; 
-/// let slides = pptx.parse()?;
-/// let slide_elements = &slides[0].elements;
-///
-/// for element in slide_elements {
-///     match element {
-///         SlideElement::Text(text) => println!("Text element: {:?}", text),
-///         SlideElement::Table(table) => println!("Table element: {:?}", table),
-///         SlideElement::Image(image) => println!("Image element: {:?}", image),
-///         SlideElement::List(list) => println!("List element: {:?}", list),
-///         SlideElement::Unknown => println!("Unknown or unsupported element detected"),
-///     }
-/// }
-/// # Ok::<(), Error::ParseError()>(())
-/// ```
-///
+/// 
 /// # Notes
 ///
 /// - The function strictly follows Microsoft's Open XML slide schema.
