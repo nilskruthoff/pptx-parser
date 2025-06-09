@@ -1,6 +1,6 @@
-﻿use std::collections::HashMap;
+﻿use pptx_parser::{Error, Formatting, ListElement, ListItem, PptxContainer, Run, Slide, SlideElement, TableCell, TableElement, TableRow, TextElement};
+use std::collections::HashMap;
 use std::fs;
-use pptx_parser::{Error, Formatting, ListElement, ListItem, PptxContainer, Run, Slide, SlideElement, TableCell, TableElement, TableRow, TextElement};
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
