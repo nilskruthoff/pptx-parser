@@ -90,11 +90,11 @@ fn parse_sp(sp_node: &Node) -> Result<SlideElement> {
             && n.tag_name().name() == "pPr"
             && n.tag_name().namespace() == Some(A_NAMESPACE)
             && (
-            n.attribute("lvl").is_some() || // Prüfen auf Listenebene
+            n.attribute("lvl").is_some() ||
                 n.children().any(|child| {
                     child.is_element() && (
-                        child.tag_name().name() == "buAutoNum" || // Geordnete Liste
-                            child.tag_name().name() == "buChar"       // Ungeordnete Liste
+                        child.tag_name().name() == "buAutoNum" ||
+                            child.tag_name().name() == "buChar"
                     )
                 })
         )
@@ -128,7 +128,6 @@ fn parse_text(tx_body_node: &Node) -> Result<SlideElement> {
 }
 
 fn parse_graphic_frame(node: &Node) -> Result<Option<SlideElement>> {
-    // Suche nach <a:graphicData> mit Tabellen-URI
     let graphic_data_node = node
         .descendants()
         .find(|n| {
@@ -139,7 +138,6 @@ fn parse_graphic_frame(node: &Node) -> Result<Option<SlideElement>> {
         });
 
     if let Some(graphic_data) = graphic_data_node {
-        // Suche nach <a:tbl> innerhalb von <a:graphicData>
         if let Some(tbl_node) = graphic_data
             .children()
             .find(|n| n.is_element() && n.tag_name().name() == "tbl" && n.tag_name().namespace() == Some(A_NAMESPACE))

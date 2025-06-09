@@ -110,12 +110,10 @@ impl<'a> Slide<'a> {
                             row_texts.push(cell_text);
                         }
 
-                        // Erstelle die Markdown-Zeile
                         let row_line = format!("| {} |", row_texts.join(" | "));
                         slide_txt.push_str(&row_line);
                         slide_txt.push('\n');
 
-                        // Füge nach der ersten Zeile den Trenner hinzu
                         if is_header {
                             let separator_line = format!("|{}|", row_texts.iter().map(|_| " --- ").collect::<Vec<_>>().join("|"));
                             slide_txt.push_str(&separator_line);
@@ -138,7 +136,6 @@ impl<'a> Slide<'a> {
                     slide_txt.push('\n');
                 },
                 SlideElement::List(list_element) => {
-                    // Vektor, um die Zähler für jede Ebene zu speichern
                     let mut counters: Vec<usize> = Vec::new();
                     let mut previous_level = 0;
 
