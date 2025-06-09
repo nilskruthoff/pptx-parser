@@ -5,6 +5,29 @@ use std::{
     path::Path,
 };
 
+/// Holds the internal representation of a loaded PowerPoint (pptx) container.
+///
+/// `PptxContainer` provides functionalities for accessing slides and their resources
+/// directly from a loaded pptx file. It parses and stores XML slides content,
+/// relationships (`rels`) files and associated resources such as images.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use pptx_parser::{Error, PptxContainer};
+///
+/// let path = Path::new("/sample.pptx");
+/// let pptx = PptxContainer::open(path)?;
+/// let slides = pptx.parse()?;
+///
+/// for slide in slides {
+///     if let Some(md) = slide.convert_to_md() {
+///         println!("{}", md);
+///     }
+/// }
+/// # Ok::<(), Error::ParseError()>(())
+/// ```
 pub struct PptxContainer<'a> {
     files: HashMap<String, Vec<u8>>,
     rels_files: HashMap<String, Vec<u8>>,
@@ -12,6 +35,24 @@ pub struct PptxContainer<'a> {
 }
 
 impl<'a> PptxContainer<'a> {
+    /// Opens a PowerPoint pptx file and initializes a `PptxContainer`.
+    ///
+    /// Processes the given file, extracting its internal files into memory. After initialization, the 
+    /// container holds slide XML data, relationships files (*.rels), and associated resources.
+    ///
+    /// # Arguments
+    ///
+    /// - `path`: Path to the PPTX file.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing:
+    /// - `Ok(PptxContainer)`: structured container instance upon successful file opening.
+    /// - `Err(Error)`: if file access or internal unzip operations fail.
+    ///
+    /// # Errors
+    ///
+    /// Errors are returned on file access problems or failures during the unzipping process.
     pub fn open(path: &Path) -> Result<Self> {
         let file = std::fs::File::open(path)?;
         let mut archive = zip::ZipArchive::new(file)?;
@@ -41,6 +82,20 @@ impl<'a> PptxContainer<'a> {
         Ok(Self { files, slides, rels_files })
     }
 
+    /// Parses the loaded pptx data within the container to structured slides.
+    ///
+    /// This method interprets XML slide data (`.xml`) and associated relationship files (`.rels`) into
+    /// fully formed `Slide` resources, ready to be consumed.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing:
+    /// - `Ok(Vec<Slide>)`: Vector of parsed slides with associated resources.
+    /// - `Err(Error)`: If parsing fails on critical parts of XML data.
+    ///
+    /// # Errors
+    ///
+    /// Errors result from missing slide data or unexpected XML structure during parsing.
     pub fn parse(&self) -> Result<Vec<Slide>> {
         let mut slides: Vec<Slide> = Vec::new();
         let slide_paths = self.get_slide_paths();
@@ -59,6 +114,14 @@ impl<'a> PptxContainer<'a> {
 }
 
 impl<'a> PptxContainer<'a> {
+    /// Retrieves and returns sorted paths for all available slides in container.
+    ///
+    /// The resulting `Vec<String>` includes all slide XML file paths (e.g. "ppt/slides/slide1.xml")
+    /// sorted by their slide numbers.
+    ///
+    /// # Returns
+    ///
+    /// A sorted vector of slide paths.
     pub fn get_slide_paths(&self) -> Vec<String> {
         let mut slides: Vec<String> = self.files
             .keys()
@@ -69,6 +132,23 @@ impl<'a> PptxContainer<'a> {
         slides
     }
 
+    /// Retrieves raw XML data for a specific slide by its path.
+    ///
+    /// Fetches the XML content corresponding to the provided slide path.
+    ///
+    /// # Arguments
+    ///
+    /// - `path`: A `&str` representing a specific slide path.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing either:
+    /// - `Ok(&[u8])`: A reference to raw slide XML data.
+    /// - `Err(Error::SlideNotFound)`: If no slide is found at the specified path.
+    ///
+    /// # Errors
+    ///
+    /// Raised if the slide path doesn't exist in the pptx data.
     pub fn read_slide_by_path(&self, path: &str) -> Result<&[u8]> {
         self.files
             .get(path)
@@ -76,6 +156,24 @@ impl<'a> PptxContainer<'a> {
             .ok_or(Error::SlideNotFound)
     }
 
+    /// Retrieves relationship XML data (*.rels) content by relation-path.
+    ///
+    /// Fetches XML data from the internal relationship file store (`rels_files`) for
+    /// given paths.
+    ///
+    /// # Arguments
+    ///
+    /// - `path`: Path string which references an internal `.rels` resource.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing:
+    /// - `Ok(&[u8])`: Raw relationship XML data.
+    /// - `Err(Error::SlideNotFound)`: If no relationship file is found at specified path.
+    ///
+    /// # Errors
+    ///
+    /// Returned when the requested `.rels` file does not exist in pptx data.
     fn get_slide_rels_path(&self, slide_path: &str) -> String {
         let mut rels_path = slide_path.to_string();
         if let Some(pos) = rels_path.rfind('/') {
@@ -85,6 +183,15 @@ impl<'a> PptxContainer<'a> {
         rels_path
     }
 
+    /// Constructs and returns the relationship path (*.rels) for a given slide.
+    ///
+    /// # Arguments
+    ///
+    /// - `slide_path`: Slide path (`ppt/slides/slideX.xml`) for which the rels path should be built.
+    ///
+    /// # Returns
+    ///
+    /// A String path representing the corresponding `.rels` resource path.
     pub fn read_rels_by_path(&self, path: &str) -> Result<&[u8]> {
         self.rels_files
             .get(path)
