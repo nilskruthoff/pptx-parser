@@ -20,7 +20,7 @@ pub struct Slide<'a> {
     pub slide_number: u32,
     pub elements: Vec<SlideElement>,
     pub images: Vec<ImageReference>,
-    files: &'a HashMap<String, Vec<u8>>,
+    pub files: &'a HashMap<String, Vec<u8>>,
 }
 
 impl<'a> Slide<'a> {
@@ -94,7 +94,7 @@ impl<'a> Slide<'a> {
             match element {
                 SlideElement::Text(text) => {
                     for run in &text.runs {
-                        slide_txt.push_str(&run.extract());
+                        slide_txt.push_str(&run.render_as_md());
                     }
                     slide_txt.push('\n');
                 },

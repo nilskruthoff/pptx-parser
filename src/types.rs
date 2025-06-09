@@ -46,6 +46,37 @@ impl Run {
     pub fn extract(&self) -> String {
         self.text.to_string()
     }
+
+    pub fn render_as_md(&self) -> String {
+        let mut has_new_line = false;
+
+        let mut result = self.extract();
+        if result.ends_with("\n") {
+            has_new_line = true;
+            result = result.replace('\n', "");
+        }
+
+        if self.formatting.bold && self.formatting.italic {
+            result = format!("***{}***", result);
+        } else {
+            if self.formatting.bold {
+                result = format!("**{}**", result);
+            }
+            if self.formatting.italic {
+                result = format!("_{}_", result);
+            }
+        }
+
+        if self.formatting.underlined {
+            result = format!("<u>{}</u>", result);
+        }
+
+        if has_new_line {
+            return format!("{}\n", result)
+        }
+        
+        result
+    }
 }
 
 #[derive(Debug)]
