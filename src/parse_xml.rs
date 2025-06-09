@@ -26,7 +26,7 @@ use roxmltree::{Document, Node};
 /// Parsing may fail and return [`Error`] if:
 /// - The provided XML data isn't valid UTF-8.
 /// - The XML structure is malformed or missing essential schema elements (`<p:cSld>` or `<p:spTree>` tags).
-/// 
+///
 /// # Notes
 ///
 /// - The function strictly follows Microsoft's Open XML slide schema.
@@ -114,13 +114,13 @@ fn parse_sp(sp_node: &Node) -> Result<SlideElement> {
 /// - `Error`: Error information encapsulated in [`crate::Error`] if parsing fails at XML parsing level.
 fn parse_text(tx_body_node: &Node) -> Result<SlideElement> {
     let mut runs = Vec::new();
-    
+
     for p_node in tx_body_node.children().filter(|n| {
         n.is_element()
             && n.tag_name().name() == "p"
             && n.tag_name().namespace() == Some(A_NAMESPACE)
     }) {
-        let mut paragraph_runs = parse_paragraph(&p_node)?;
+        let mut paragraph_runs = parse_paragraph(&p_node, true)?;
         runs.append(&mut paragraph_runs);
     }
 
@@ -150,7 +150,7 @@ fn parse_graphic_frame(node: &Node) -> Result<Option<SlideElement>> {
     Ok(None)
 }
 
-/// Parses a table node (`<a:tbl>`) and extracts all 
+/// Parses a table node (`<a:tbl>`) and extracts all
 /// table rows ('<a:tr>') elements to construct a `TableElement`.
 fn parse_table(tbl_node: &Node) -> Result<TableElement> {
     let mut rows = Vec::new();
@@ -167,7 +167,7 @@ fn parse_table(tbl_node: &Node) -> Result<TableElement> {
     Ok(TableElement { rows })
 }
 
-/// Parses a table row node (`'<a:tr>'`) and extracts all 
+/// Parses a table row node (`'<a:tr>'`) and extracts all
 /// table cells ('<a:tc>') elements to construct a full `TableRow`.
 fn parse_table_row(tr_node: &Node) -> Result<TableRow> {
     let mut cells = Vec::new();
@@ -184,7 +184,7 @@ fn parse_table_row(tr_node: &Node) -> Result<TableRow> {
     Ok(TableRow { cells })
 }
 
-/// Parses a table cell node (`'<a:tc>'`) and extracts all 
+/// Parses a table cell node (`'<a:tc>'`) and extracts all
 /// paragraph nodes ('<a:p>') to construct a `TableCell`.
 fn parse_table_cell(tc_node: &Node) -> Result<TableCell> {
     let mut runs = Vec::new();
@@ -199,7 +199,7 @@ fn parse_table_cell(tc_node: &Node) -> Result<TableCell> {
                 && n.tag_name().name() == "p"
                 && n.tag_name().namespace() == Some(A_NAMESPACE)
         }) {
-            let mut paragraph_runs = parse_paragraph(&p_node)?;
+            let mut paragraph_runs = parse_paragraph(&p_node, false)?;
             runs.append(&mut paragraph_runs);
         }
     }
@@ -212,7 +212,7 @@ fn parse_table_cell(tc_node: &Node) -> Result<TableCell> {
 /// This function locates and processes the `<a:blip>` element inside a given
 /// image node, extracting the necessary attributes to build an `ImageReference` object
 /// that is necessary to link the image and extracts the relative image path from the media dir
-/// 
+///
 /// # Returns
 ///
 /// Returns a `Result` with:
@@ -238,7 +238,7 @@ fn parse_pic(pic_node: &Node) -> Result<SlideElement> {
 
 /// Parses the paragraph node (`<a:p>`) that is already identified as a list from the text body node (`<p:txBody>`)
 /// and extracts the _text runs_, the _level of indentation_ and weather its _ordered_ or _unordered_
-/// 
+///
 /// # Returns
 /// - `SlideElement::List`: A complete lists with all children of type `ListElement`
 /// - `Error`: Error information encapsulated in [`crate::Error`] if parsing fails at XML parsing level.
@@ -252,7 +252,7 @@ fn parse_list(tx_body_node: &Node) -> Result<SlideElement> {
     }) {
         let (level, is_ordered) = parse_list_properties(&p_node)?;
 
-        let runs = parse_paragraph(&p_node)?;
+        let runs = parse_paragraph(&p_node, true)?;
 
         items.push(ListItem { level, is_ordered, runs });
     }
@@ -298,10 +298,10 @@ fn parse_list_properties(p_node: &Node) -> Result<(u32, bool)> {
 }
 
 /// Parses a single text paragraph node (`<a:p>`) into multiple text runs.
-/// 
+///
 /// # Notes
 /// Searches for the last run and adds a newline character
-fn parse_paragraph(p_node: &Node) -> Result<Vec<Run>> {
+fn parse_paragraph(p_node: &Node, add_new_line: bool) -> Result<Vec<Run>> {
     let run_nodes: Vec<_> = p_node.children().filter(|n| {
         n.is_element()
             && n.tag_name().name() == "r"
@@ -313,8 +313,8 @@ fn parse_paragraph(p_node: &Node) -> Result<Vec<Run>> {
 
     for (idx, r_node) in run_nodes.iter().enumerate() {
         let mut run = parse_run(r_node)?;
-
-        if idx == count - 1 {
+        
+        if add_new_line && idx == count - 1 {
             run.text.push('\n');
         }
 
