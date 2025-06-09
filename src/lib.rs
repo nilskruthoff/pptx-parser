@@ -32,6 +32,9 @@ pub enum Error {
     #[error("Image not found")]
     ImageNotFound,
 
+    #[error("Relationship not found")]
+    RelationshipNotFound,
+
     #[error("Unbekannter Fehler")]
     Unknown,
 }
