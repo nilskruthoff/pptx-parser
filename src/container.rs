@@ -1,4 +1,4 @@
-﻿use super::{Error, Result, SlideElement, Slide};
+﻿use super::{Error, Result, Slide};
 use std::{
     collections::HashMap,
     io::Read,
@@ -13,7 +13,7 @@ use std::{
 pub struct PptxContainer<'a> {
     files: HashMap<String, Vec<u8>>,
     rels_files: HashMap<String, Vec<u8>>,
-    slides: Vec<Slide<'a>>,
+    _slides: Vec<Slide<'a>>,
 }
 
 impl<'a> PptxContainer<'a> {
@@ -41,7 +41,7 @@ impl<'a> PptxContainer<'a> {
 
         let mut files = HashMap::new();
         let mut rels_files = HashMap::new(); // Neu
-        let mut slides: Vec<Slide> = Vec::new();
+        let slides: Vec<Slide> = Vec::new();
 
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
@@ -56,12 +56,7 @@ impl<'a> PptxContainer<'a> {
             }
         }
 
-        let container_path = path
-            .parent()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|| ".".to_string());
-
-        Ok(Self { files, slides, rels_files })
+        Ok(Self { files, _slides: slides, rels_files })
     }
 
     /// Parses the loaded pptx data within the container to structured slides.

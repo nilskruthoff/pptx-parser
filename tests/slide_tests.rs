@@ -1,18 +1,18 @@
-﻿use std::fs::File;
+﻿use pptx_parser::{Error, PptxContainer};
+use std::fs::File;
 use std::io::Write;
-use pptx_parser::{Error, PptxContainer, SlideElement};
 
 #[test]
 fn test_parse_pptx() -> Result<(), Error> {
     let path = std::path::Path::new("test-data/sample.pptx");
     let pptx = PptxContainer::open(path)?;
-    let slides = pptx.parse()?;
+    let _slides = pptx.parse()?;
     Ok(())
 }
 
 #[test]
 fn test_parse_lists() -> Result<(), Error> {
-    let path = std::path::Path::new("test-data/listtest.pptx");
+    let path = std::path::Path::new("test-data/sample.pptx");
     let pptx = PptxContainer::open(path)?;
     let slides = pptx.parse()?;
 

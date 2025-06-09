@@ -1,8 +1,8 @@
-﻿use crate::types::{SlideElement, TextElement, TableElement, TableRow, TableCell};
-use crate::constants::{P_NAMESPACE, A_NAMESPACE, RELS_NAMESPACE};
-use roxmltree::{Document, Node};
-use crate::{Result, Error, Formatting, Run, ImageReference, ListItem, ListElement};
+﻿use crate::constants::{A_NAMESPACE, P_NAMESPACE, RELS_NAMESPACE};
+use crate::types::{SlideElement, TableCell, TableElement, TableRow, TextElement};
 use crate::SlideElement::Unknown;
+use crate::{Error, Formatting, ImageReference, ListElement, ListItem, Result, Run};
+use roxmltree::{Document, Node};
 
 
 /// Parses raw XML slide data from a PowerPoint (pptx) file and extracts all slide elements.
@@ -274,21 +274,21 @@ fn parse_list_properties(p_node: &Node) -> Result<(u32, bool)> {
     let mut level = 0;
     let mut is_ordered = false;
 
-    if let Some(pPr_node) = p_node.children().find(|n| {
+    if let Some(p_pr_node) = p_node.children().find(|n| {
         n.is_element()
             && n.tag_name().name() == "pPr"
             && n.tag_name().namespace() == Some(A_NAMESPACE)
     }) {
-        if let Some(lvl_attr) = pPr_node.attribute("lvl") {
+        if let Some(lvl_attr) = p_pr_node.attribute("lvl") {
             level = lvl_attr.parse::<u32>().unwrap_or(0);
         }
 
-        is_ordered = pPr_node.children().any(|n| {
+        is_ordered = p_pr_node.children().any(|n| {
             n.is_element() && n.tag_name().namespace() == Some(A_NAMESPACE) && n.tag_name().name() == "buAutoNum"
         });
 
         if !is_ordered {
-            is_ordered = pPr_node.children().any(|n| {
+            is_ordered = p_pr_node.children().any(|n| {
                 n.is_element() && n.tag_name().namespace() == Some(A_NAMESPACE) && n.tag_name().name() == "buChar"
             });
         }
@@ -329,21 +329,21 @@ fn parse_run(r_node: &Node) -> Result<Run> {
     let mut text = String::new();
     let mut formatting = Formatting::default();
 
-    if let Some(rPr_node) = r_node.children().find(|n| {
+    if let Some(r_pr_node) = r_node.children().find(|n| {
         n.is_element()
             && n.tag_name().name() == "rPr"
             && n.tag_name().namespace() == Some(A_NAMESPACE)
     }) {
-        if let Some(b_attr) = rPr_node.attribute("b") {
+        if let Some(b_attr) = r_pr_node.attribute("b") {
             formatting.bold = b_attr == "1" || b_attr.eq_ignore_ascii_case("true");
         }
-        if let Some(i_attr) = rPr_node.attribute("i") {
+        if let Some(i_attr) = r_pr_node.attribute("i") {
             formatting.italic = i_attr == "1" || i_attr.eq_ignore_ascii_case("true");
         }
-        if let Some(u_attr) = rPr_node.attribute("u") {
+        if let Some(u_attr) = r_pr_node.attribute("u") {
             formatting.underlined = u_attr != "none";
         }
-        if let Some(lang_attr) = rPr_node.attribute("lang") {
+        if let Some(lang_attr) = r_pr_node.attribute("lang") {
             formatting.lang = lang_attr.to_string();
         }
     }

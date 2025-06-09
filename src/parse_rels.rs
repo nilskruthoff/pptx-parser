@@ -1,7 +1,7 @@
-﻿use crate::{Result, Error};
+﻿use crate::constants::IMAGE_NAMESPACE;
 use crate::types::ImageReference;
+use crate::{Error, Result};
 use roxmltree::Document;
-use crate::constants::IMAGE_NAMESPACE;
 
 /// Parses relationship (`.rels`) XML data from a PPTX slide, extracting image references.
 ///
