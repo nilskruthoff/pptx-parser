@@ -13,6 +13,7 @@
 - 📄 **Extract Slide Text:** Parses and extracts text elements from slides.
 - 📋 **Lists & Tables:** Recognizes and formats lists (ordered/unordered) and tables into Markdown.
 - 🖼️ **Embedded Images:** Supports embedded images extraction as base64-encoded inline images.
+- 💾 **Memory Efficient**: Use the streaming API to iterate over one slide at a time, never overloading memory.
 - ⚙️ **Robust & Safe APIs:** Designed according to Rust best practices with explicit error handling.
 - 🧑‍💻 **Developer-Friendly:** Simple API design, extensive documentation, and examples.
 - 🪄 **Embedding:** Used to provide pptx content and meta information in a form that is useful for embeddings
