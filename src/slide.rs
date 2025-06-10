@@ -37,36 +37,16 @@ impl Slide {
         }
     }
 
-    // Extrahiere Slide-Nummer aus Pfad (statische Methode)
-    pub fn extract_slide_number(path: &str) -> Option<u32> {
-        path
-            .split('/')
-            .last()
-            .and_then(|filename| {
-                filename
-                    .strip_prefix("slide")
-                    .and_then(|s| s.strip_suffix(".xml"))
-            })
-            .and_then(|num_str| num_str.parse::<u32>().ok())
-    }
-
-    // Link Bilder zu den entsprechenden Elementen
-    pub fn link_images(&mut self) {
-        let id_to_target: HashMap<String, String> = self.images
-            .iter()
-            .map(|img_ref| (img_ref.id.clone(), img_ref.target.clone()))
-            .collect();
-
-        for element in &mut self.elements {
-            if let SlideElement::Image(ref mut img_ref) = element {
-                if let Some(target) = id_to_target.get(&img_ref.id) {
-                    img_ref.target = target.clone();
-                }
-            }
-        }
-    }
-
-    // Konvertiert den Slide zu Markdown
+    /// Converts slide contents into a Markdown formatted string.
+    ///
+    /// Translates internal slide elements (text, tables, lists, images) to valid
+    /// and readable Markdown. Embedded images will be encoded as base64 inline images.
+    ///
+    /// # Returns
+    ///
+    /// Returns an `Option<String>`:
+    /// - `Some(String)`: Markdown representation of slide if conversion succeeds.
+    /// - `None`: If a conversion error occurs during image encoding.
     pub fn convert_to_md(&self) -> Option<String> {
         let mut slide_txt = String::new();
         slide_txt.push_str(format!("<!-- Slide {} -->\n\n", self.slide_number).as_str());
@@ -80,7 +60,6 @@ impl Slide {
                     slide_txt.push('\n');
                 },
                 SlideElement::Table(table) => {
-                    // Table handling (wie vorher)
                     let mut is_header = true;
                     for row in &table.rows {
                         let mut row_texts = Vec::new();
@@ -106,7 +85,6 @@ impl Slide {
                     slide_txt.push('\n');
                 },
                 SlideElement::Image(image_ref) => {
-                    // Bild aus den vorab geladenen Daten holen
                     if let Some(image_data) = self.image_data.get(&image_ref.id) {
                         let base64_string = general_purpose::STANDARD.encode(image_data);
                         let image_name = &image_ref.target.split('/').last()?;
@@ -117,7 +95,6 @@ impl Slide {
                     slide_txt.push('\n');
                 },
                 SlideElement::List(list_element) => {
-                    // List handling (wie vorher)
                     let mut counters: Vec<usize> = Vec::new();
                     let mut previous_level = 0;
 
@@ -155,5 +132,40 @@ impl Slide {
             }
         }
         Some(slide_txt)
+    }
+
+    /// Extracts the numeric slide identifier from a slide path.
+    ///
+    /// Helper method to parse slide numbers from internal pptx
+    /// slide paths (e.g., "ppt/slides/slide1.xml" → `1`).
+    pub fn extract_slide_number(path: &str) -> Option<u32> {
+        path.split('/')
+            .next_back()
+            .and_then(|filename| {
+                filename
+                    .strip_prefix("slide")
+                    .and_then(|s| s.strip_suffix(".xml"))
+            })
+            .and_then(|num_str| num_str.parse::<u32>().ok())
+    }
+
+    /// Links slide images references with their corresponding targets.
+    ///
+    /// Ensures that each image referenced by its ID is correctly 
+    /// linked to the actual internal resource paths stored in the slide.
+    /// This method is typically used internally after parsing a slide
+    pub fn link_images(&mut self) {
+        let id_to_target: HashMap<String, String> = self.images
+            .iter()
+            .map(|img_ref| (img_ref.id.clone(), img_ref.target.clone()))
+            .collect();
+
+        for element in &mut self.elements {
+            if let SlideElement::Image(ref mut img_ref) = element {
+                if let Some(target) = id_to_target.get(&img_ref.id) {
+                    img_ref.target = target.clone();
+                }
+            }
+        }
     }
 }

@@ -5,17 +5,39 @@ use std::{
     path::Path,
 };
 
+/// Holds the internal representation of a loaded PowerPoint (pptx) container.
+///
+/// `PptxContainer` provides functionalities for accessing slides and their resources
+/// directly from a loaded pptx file. It parses and stores XML slides content,
+/// relationships (`rels`) files, and associated resources such as images.
 pub struct PptxContainer {
     archive: zip::ZipArchive<std::fs::File>,
     slide_paths: Vec<String>,
 }
 
 impl PptxContainer {
+    /// Opens a PowerPoint pptx file and initializes a `PptxContainer`.
+    ///
+    /// Processes the given file, extracting its internal files into memory. After initialization, the 
+    /// container holds slide XML data, relationships files (*.rels), and associated resources.
+    ///
+    /// # Arguments
+    ///
+    /// - `path`: Path to the PPTX file.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result` containing:
+    /// - `Ok(PptxContainer)`: structured container instance upon successful file opening.
+    /// - `Err(Error)`: if file access or internal unzip operations fail.
+    ///
+    /// # Errors
+    ///
+    /// Errors are returned on file access problems or failures during the unzipping process.
     pub fn open(path: &Path) -> Result<Self> {
         let file = std::fs::File::open(path)?;
         let mut archive = zip::ZipArchive::new(file)?;
 
-        // Extrahiere nur die Pfade der Slides, nicht ihren Inhalt
         let mut slide_paths: Vec<String> = Vec::new();
 
         for i in 0..archive.len() {
@@ -32,7 +54,10 @@ impl PptxContainer {
         Ok(Self { archive, slide_paths })
     }
 
-    // Methode, um alle Slides auf einmal zu extrahieren (nicht-Streaming)
+    /// Parses the data of all slides for each path present in the containers' `slide_path` vector.
+    /// 
+    /// # Note
+    /// Parsing is synchronous and in-memory, image data is extracted
     pub fn parse_all(&mut self) -> Result<Vec<Slide>> {
         let mut slides = Vec::new();
         let count = self.slide_paths.len();
@@ -47,31 +72,49 @@ impl PptxContainer {
         Ok(slides)
     }
 
-    // Methode, um einen Iterator für Slides zu erhalten (Streaming)
+    
     pub fn iter_slides(&mut self) -> SlideIterator {
         SlideIterator::new(self)
     }
 
-    // Hilfsmethode zum Laden eines einzelnen Slides
+    /// Loads a slide from the PPTX file by its index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The zero-based index of the slide to load.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(Slide))` - The parsed slide if found and successfully processed.
+    /// * `Ok(None)` - If the index is out of bounds.
+    /// * `Err(_)` - If there was an error loading or parsing the slide.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// // let mut streamer = open(Path::new("presentation.pptx"))?;
+    /// // if let Ok(Some(slide)) = streamer.load_slide(0) {
+    ///     // println!("Loaded first slide: {}", slide.slide_number);
+    /// // }
+    /// ```
     fn load_slide(&mut self, slide_path: &str) -> Result<Option<Slide>> {
-        // Slide XML laden
+        // load xml data
         let slide_data = self.read_file_from_archive(slide_path)?;
 
-        // Relationship-Datei für diesen Slide laden
+        // load relationship file
         let rels_path = self.get_slide_rels_path(slide_path);
         let rels_data = self.read_file_from_archive(&rels_path).ok();
 
-        // Extrahiere Bilder aus den Beziehungen
+        // extract images from relationships
         let mut images = Vec::new();
         if let Some(ref rels_bytes) = rels_data {
             images = crate::parse_rels::parse_slide_rels(rels_bytes)?;
         }
 
-        // Slide parsen
+        // parse slide and preload images
         let slide_number = Slide::extract_slide_number(slide_path).unwrap_or(0);
         let elements = crate::parse_xml::parse_slide_xml(&slide_data)?;
 
-        // Bild-Ressourcen vorladen
         let mut image_data = HashMap::new();
         for img_ref in &images {
             let img_path = Self::get_full_image_path(slide_path, &img_ref.target);
@@ -80,7 +123,6 @@ impl PptxContainer {
             }
         }
 
-        // Slide erstellen
         let mut slide = Slide::new(
             slide_path.to_string(),
             slide_number,
@@ -93,7 +135,21 @@ impl PptxContainer {
         Ok(Some(slide))
     }
 
-    // Hilfsmethoden für den Zugriff auf die Archivdateien
+    /// Reads a file from the PPTX archive by its internal path.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The internal path of the file within the PPTX archive.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Vec<u8>)` - The content of the file as a byte vector.
+    /// * `Err(_)` - If the file could not be found or read.
+    ///
+    /// # Notes
+    ///
+    /// This is an internal method used to extract individual files from the
+    /// PPTX archive (which is essentially a ZIP file).
     fn read_file_from_archive(&mut self, path: &str) -> Result<Vec<u8>> {
         let mut file = self.archive.by_name(path)?;
         let mut content = Vec::new();
@@ -101,6 +157,21 @@ impl PptxContainer {
         Ok(content)
     }
 
+    /// Constructs the path to the relationships file for a given slide.
+    ///
+    /// # Arguments
+    ///
+    /// * `slide_path` - The internal path of the slide file.
+    ///
+    /// # Returns
+    ///
+    /// The path to the corresponding relationships (.rels) file.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// // For a slide path "ppt/slides/slide1.xml"
+    /// // Returns "ppt/slides/_rels/slide1.xml.rels"
     fn get_slide_rels_path(&self, slide_path: &str) -> String {
         let mut rels_path = slide_path.to_string();
         if let Some(pos) = rels_path.rfind('/') {
@@ -121,6 +192,23 @@ impl PptxContainer {
     }
 }
 
+/// An iterator for streaming slides from a PPTX file.
+///
+/// This iterator allows processing slides one by one, which is more
+/// memory-efficient than loading all slides at once. It iterates through
+/// all slides in the presentation in order.
+///
+/// # Example
+///
+/// ```
+/// // let mut streamer = PptxStreamer::open(Path::new("presentation.pptx"))?;
+/// // for slide_result in streamer.iter_slides() {
+/// //    match slide_result {
+/// //        Ok(slide) => println!("Processing slide {}", slide.slide_number),
+/// //        Err(e) => eprintln!("Error: {:?}", e),
+/// //    }
+/// // }
+/// ```
 pub struct SlideIterator<'a> {
     container: &'a mut PptxContainer,
     current_paths: Vec<String>, // Pfade beim Erstellen des Iterators kopieren
@@ -128,6 +216,15 @@ pub struct SlideIterator<'a> {
 }
 
 impl<'a> SlideIterator<'a> {
+    /// Creates a new SlideIterator from a PptxStreamer.
+    ///
+    /// # Arguments
+    ///
+    /// * `container` - A mutable reference to a PptxStreamer that will be used to load slides.
+    ///
+    /// # Returns
+    ///
+    /// A new SlideIterator instance that will iterate through all slides in the presentation.
     fn new(container: &'a mut PptxContainer) -> Self {
         let current_paths = container.slide_paths.clone();
         Self {
@@ -141,6 +238,16 @@ impl<'a> SlideIterator<'a> {
 impl<'a> Iterator for SlideIterator<'a> {
     type Item = Result<Slide>;
 
+    /// Advances the iterator and returns the next slide.
+    ///
+    /// This method loads and processes the next slide from the PPTX file.
+    /// It's automatically called when you use the iterator in a for loop.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(Ok(Slide))` - The next slide was successfully loaded and processed.
+    /// * `Some(Err(_))` - There was an error loading or processing the next slide.
+    /// * `None` - There are no more slides to process.
     fn next(&mut self) -> Option<Self::Item> {
         if self.current_index >= self.current_paths.len() {
             return None;
