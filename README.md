@@ -1,10 +1,10 @@
 ﻿# pptx-to-md
 
-[![Crates.io](https://img.shields.io/crates/v/<your_crate_name>.svg)](https://crates.io/crates/<your_crate_name>)
-[![Documentation](https://docs.rs/<your_crate_name>/badge.svg)](https://docs.rs/<your_crate_name>)
-![License](https://img.shields.io/crates/l/<your_crate_name>.svg)
+[![Crates.io](https://img.shields.io/crates/v/pptx-to-md.svg)](https://crates.io/crates/pptx-to-md)
+[![Documentation](https://docs.rs/pptx-to-md/badge.svg)](https://docs.rs/pptx-to-md)
+![License](https://img.shields.io/crates/l/pptx-to-md.svg)
 
-`pptx-to-md` is a Rust library to parse Microsoft PowerPoint (`.pptx`) slides and convert them into structured Markdown content and data, making it easy to process, use, or integrate slide data programmatically.
+`pptx-to-md` is a library to parse Microsoft PowerPoint (`.pptx`) slides and convert them into structured Markdown content and data, making it easy to process, use, or integrate slide data programmatically.
 
 ---
 
@@ -88,7 +88,8 @@ pptx-to-md/
 ---
 
 ## 📜 License
-This project is licensed under the MIT License and Apache License.
+This project is licensed under the [MIT-License](https://github.com/nilskruthoff/pptx-parser/blob/master/LICENCE-MIT)
+and [Apache 2.0-Licence](https://github.com/nilskruthoff/pptx-parser/blob/master/LICENSE-APACHE).
 
 Feel free to contribute or suggest improvements!
 
