@@ -1,9 +1,7 @@
-﻿use std::collections::HashMap;
+﻿use pptx_to_md::{Formatting, ListElement, ListItem, Run, Slide, SlideElement, TableCell, TableElement, TableRow, TextElement};
+use std::collections::HashMap;
 use std::fs;
-use std::fs::File;
-use std::io::Write;
 use std::path::PathBuf;
-use pptx_to_md::{Error, Formatting, ListElement, ListItem, PptxContainer, Run, Slide, SlideElement, TableCell, TableElement, TableRow, TextElement};
 
 fn load_test_data(filename: &str) -> String {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -44,7 +42,7 @@ fn test_markdown_table_conversion() {
             })
         ],
         images: vec![],
-        files: &HashMap::new(),
+        image_data: HashMap::new(),
     };
     let md_result = slide.convert_to_md().unwrap();
 
@@ -72,7 +70,7 @@ fn test_markdown_list_conversion() {
             })
         ],
         images: vec![],
-        files: &HashMap::new(),
+        image_data: HashMap::new(),
     };
 
     let md_result = slide.convert_to_md().unwrap();
@@ -97,7 +95,7 @@ fn test_formatting_conversion() {
             SlideElement::Text(TextElement { runs: vec![Run { text: "bold, cursive and underlined\n".into(), formatting: Formatting { bold: true, italic: true, underlined: true, lang: "en-US".into() } }]}),
         ],
         images: vec![],
-        files: &HashMap::new(),
+        image_data: HashMap::new(),
     };
 
     let md_result = slide.convert_to_md().unwrap();
@@ -107,20 +105,4 @@ fn test_formatting_conversion() {
         normalize_test_string(&md_result),
         normalize_test_string(&expected_md)
     );
-}
-
-#[test]
-fn test_parse_lists() -> Result<(), Error> {
-    let path = std::path::Path::new("test-data/sample.pptx");
-    let pptx = PptxContainer::open(path)?;
-    let slides = pptx.parse()?;
-
-    let mut md_file = File::create("output-list.md")?;
-    
-    for slide in slides {
-        if let Some(md) = slide.convert_to_md() {
-            writeln!(md_file, "{}", md).expect("TODO: panic message");
-        }
-    }
-    Ok(())
 }

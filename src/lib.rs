@@ -35,6 +35,9 @@ pub enum Error {
     #[error("Relationship not found")]
     RelationshipNotFound,
 
+    #[error("Conversion was not possible")]
+    ConversionFailed,
+
     #[error("Unbekannter Fehler")]
     Unknown,
 }

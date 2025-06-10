@@ -6,8 +6,24 @@ description = "Parse Microsoft PowerPoint files (.pptx) into Markdown (.md)"
 readme = "README.md"
 repository = "https://github.com/nilskruthoff/pptx-parser.git"
 license = "MIT OR Apache-2.0"
-keywords = ["powerpoint", "markdown", "pptx", "md", "parser"]
-categories = ["parsing"]
+keywords = ["pptx", "markdown", "conversion", "microsoft", "parser"]
+categories = ["text-processing", "parser-implementations"]
+
+[[example]]
+name = "basic_usage"
+path = "examples/basic_usage.rs"
+
+[[example]]
+name = "memory_efficient_streaming"
+path = "examples/memory_efficient_streaming.rs"
+
+[[example]]
+name = "image_extraction"
+path = "examples/image_extraction.rs"
+
+[[example]]
+name = "slide_elements"
+path = "examples/slide_elements.rs"
 
 [dependencies]
 zip = "2.2.2"
