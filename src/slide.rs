@@ -1,9 +1,6 @@
-﻿use super::Error;
-use crate::parse_xml;
-use crate::{parse_rels, ImageReference, SlideElement};
+﻿use crate::{ImageReference, SlideElement};
 use base64::{engine::general_purpose, Engine as _};
 use std::collections::HashMap;
-use std::io::Read;
 
 /// Represents a single slide extracted from a PowerPoint (pptx) file.
 ///
@@ -20,7 +17,7 @@ pub struct Slide {
     pub slide_number: u32,
     pub elements: Vec<SlideElement>,
     pub images: Vec<ImageReference>,
-    pub image_data: HashMap<String, Vec<u8>>, // Hält die Bilddaten direkt
+    pub image_data: HashMap<String, Vec<u8>>,
 }
 
 impl Slide {

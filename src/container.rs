@@ -1,10 +1,9 @@
-﻿
+﻿use super::{Result, Slide};
 use std::{
     collections::HashMap,
     io::Read,
     path::Path,
 };
-use super::{Error, Result, Slide};
 
 pub struct PptxContainer {
     archive: zip::ZipArchive<std::fs::File>,
