@@ -2,7 +2,7 @@
 use std::fs;
 use std::fs::File;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use pptx_to_md::{Error, Formatting, ListElement, ListItem, PptxContainer, Run, Slide, SlideElement, TableCell, TableElement, TableRow, TextElement};
 
 fn load_test_data(filename: &str) -> String {
@@ -44,7 +44,7 @@ fn test_markdown_table_conversion() {
             })
         ],
         images: vec![],
-        files: &HashMap::new(),
+        image_data: HashMap::new(),
     };
     let md_result = slide.convert_to_md().unwrap();
 
@@ -72,7 +72,7 @@ fn test_markdown_list_conversion() {
             })
         ],
         images: vec![],
-        files: &HashMap::new(),
+        image_data: HashMap::new(),
     };
 
     let md_result = slide.convert_to_md().unwrap();
@@ -97,7 +97,7 @@ fn test_formatting_conversion() {
             SlideElement::Text(TextElement { runs: vec![Run { text: "bold, cursive and underlined\n".into(), formatting: Formatting { bold: true, italic: true, underlined: true, lang: "en-US".into() } }]}),
         ],
         images: vec![],
-        files: &HashMap::new(),
+        image_data: HashMap::new(),
     };
 
     let md_result = slide.convert_to_md().unwrap();
@@ -109,18 +109,53 @@ fn test_formatting_conversion() {
     );
 }
 
-#[test]
-fn test_parse_lists() -> Result<(), Error> {
-    let path = std::path::Path::new("test-data/sample.pptx");
-    let pptx = PptxContainer::open(path)?;
-    let slides = pptx.parse()?;
+// #[test]
+// fn test_parse_lists() -> Result<(), Error> {
+//     let path = std::path::Path::new("test-data/sample.pptx");
+//     let pptx = PptxContainer::open(path)?;
+//     let slides = pptx.parse()?;
+// 
+//     let mut md_file = File::create("output-list.md")?;
+//     
+//     for slide in slides {
+//         if let Some(md) = slide.convert_to_md() {
+//             writeln!(md_file, "{}", md).expect("TODO: panic message");
+//         }
+//     }
+//     Ok(())
+// }
 
+#[test]
+fn test_old() -> Result<(), Box<dyn std::error::Error>> {
+    let pptx_path = Path::new("test-data/sample2.pptx");
+
+    let mut container = PptxContainer::open(pptx_path)?;
+
+    // Option 1: Alle Slides auf einmal verarbeiten (nicht-Streaming)
+    let slides = container.parse_all()?;
     let mut md_file = File::create("output-list.md")?;
-    
     for slide in slides {
-        if let Some(md) = slide.convert_to_md() {
-            writeln!(md_file, "{}", md).expect("TODO: panic message");
-        }
+        let md_content = slide.convert_to_md().unwrap_or_default();
+        println!("{}", md_content);
+        writeln!(md_file, "{}", md_content).expect("TODO: panic message");
     }
+    
+    Ok(())
+}
+
+#[test]
+fn test_streaming() -> Result<(), Error> {
+    let pptx_path = Path::new("test-data/sample2.pptx");
+
+    let mut container = PptxContainer::open(pptx_path)?;
+
+    for slide_result in container.iter_slides() {
+        let slide = slide_result?;
+        let md_content = slide.convert_to_md().unwrap_or_default();
+        println!("{}", md_content);
+        // Nach jedem Slide wird der Speicher für diesen Slide freigegeben
+        println!("Processed slide {}", slide.slide_number);
+    }
+
     Ok(())
 }
