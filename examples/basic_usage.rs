@@ -2,7 +2,7 @@
 //!
 //! This example demonstrates how to open a PPTX file and convert all slides to Markdown.
 //!
-//! Run with: cargo run --example basic_usage -- path/to/your/presentation.pptx
+//! Run with: cargo run --example basic_usage <path/to/your/presentation.pptx>
 
 use pptx_to_md::{PptxContainer, Result};
 use std::env;
@@ -16,7 +16,7 @@ fn main() -> Result<()> {
     let pptx_path = if args.len() > 1 {
         &args[1]
     } else {
-        eprintln!("Usage: cargo run --example basic_usage -- path/to/presentation.pptx");
+        eprintln!("Usage: cargo run --example basic_usage <path/to/presentation.pptx>");
         return Ok(());
     };
 
