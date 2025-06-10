@@ -1,9 +1,9 @@
-﻿use pptx_parser::{Error, Formatting, ListElement, ListItem, PptxContainer, Run, Slide, SlideElement, TableCell, TableElement, TableRow, TextElement};
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
+use pptx_to_md::{Error, Formatting, ListElement, ListItem, PptxContainer, Run, Slide, SlideElement, TableCell, TableElement, TableRow, TextElement};
 
 fn load_test_data(filename: &str) -> String {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
