@@ -1,10 +1,15 @@
 [package]
-name = "pptx-parser"
+name = "pptx-to-md"
 version = "0.1.0"
 edition = "2021"
+description = "Parse Microsoft PowerPoint files (.pptx) into Markdown (.md)"
+readme = "README.md"
+repository = "https://github.com/nilskruthoff/pptx-parser.git"
+license = "MIT OR Apache-2.0"
+keywords = ["powerpoint", "markdown", "pptx", "md", "parser"]
+categories = ["parsing"]
 
 [dependencies]
-anyhow = "1.0.95"
 zip = "2.2.2"
 roxmltree = "0.20.0"
 thiserror = "2.0.11"

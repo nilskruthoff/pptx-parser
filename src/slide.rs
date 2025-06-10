@@ -4,16 +4,44 @@ use crate::{parse_rels, ImageReference, SlideElement};
 use base64::{engine::general_purpose, Engine as _};
 use std::collections::HashMap;
 
+
+/// Represents a single slide extracted from a PowerPoint (pptx) file.
+///
+/// Contains structured slide data including slide number, parsed content elements
+/// (text, tables, images, lists), and associated image references.
+///
+/// A `Slide` can be converted into other formats, such as Markdown, or its
+/// contained images can be extracted in base64 representation.
+///
+/// Typically, you retrieve instances of `Slide` through [`PptxContainer::parse()`].
 #[derive(Debug)]
 pub struct Slide<'a> {
     pub rel_path: String,
     pub slide_number: u32,
     pub elements: Vec<SlideElement>,
     pub images: Vec<ImageReference>,
-    files: &'a HashMap<String, Vec<u8>>,
+    pub files: &'a HashMap<String, Vec<u8>>,
 }
 
 impl<'a> Slide<'a> {
+    /// Parses raw slide XML-data and relationships to create a structured [`Slide`] instance.
+    ///
+    /// # Arguments
+    ///
+    /// - `xml`: Raw XML byte slice representing slide information.
+    /// - `rel_path`: The internal relationship path of the slide.
+    /// - `rels_data`: Optional relationships XML data (`.rels`) associated with slide.
+    /// - `files`: A reference to the pptx file content map, for resource lookup.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Result`:
+    /// - `Ok(Slide)`: Fully structured slide upon successful parsing.
+    /// - `Err(Error)`: If XML parsing or slide building fails.
+    ///
+    /// # Errors
+    ///
+    /// Parsing may fail if XML structure is malformed or critical data is missing.
     pub fn parse(
         xml: &[u8],
         rel_path: String,
@@ -32,6 +60,10 @@ impl<'a> Slide<'a> {
         Ok(Slide { rel_path, slide_number, elements, images, files })
     }
 
+    /// Extracts the numeric slide identifier from a slide path.
+    ///
+    /// Helper method to parse slide numbers from internal pptx
+    /// slide paths (e.g., "ppt/slides/slide1.xml" → `1`).
     fn extract_slide_number(path: &str) -> Option<u32> {
         path
             .split('/')
@@ -44,6 +76,16 @@ impl<'a> Slide<'a> {
             .and_then(|num_str| num_str.parse::<u32>().ok())
     }
 
+    /// Converts slide contents into a Markdown formatted string.
+    ///
+    /// Translates internal slide elements (text, tables, lists, images) to valid
+    /// and readable Markdown. Embedded images will be encoded as base64 inline images.
+    ///
+    /// # Returns
+    ///
+    /// Returns an `Option<String>`:
+    /// - `Some(String)`: Markdown representation of slide if conversion succeeds.
+    /// - `None`: If a conversion error occurs during image encoding.
     pub fn convert_to_md(&self) -> Option<String> {
         let mut slide_txt = String::new();
         slide_txt.push_str(format!("<!-- Slide {} -->\n\n", self.slide_number).as_str());
@@ -52,7 +94,7 @@ impl<'a> Slide<'a> {
             match element {
                 SlideElement::Text(text) => {
                     for run in &text.runs {
-                        slide_txt.push_str(&run.extract());
+                        slide_txt.push_str(&run.render_as_md());
                     }
                     slide_txt.push('\n');
                 },
@@ -68,12 +110,10 @@ impl<'a> Slide<'a> {
                             row_texts.push(cell_text);
                         }
 
-                        // Erstelle die Markdown-Zeile
                         let row_line = format!("| {} |", row_texts.join(" | "));
                         slide_txt.push_str(&row_line);
                         slide_txt.push('\n');
 
-                        // Füge nach der ersten Zeile den Trenner hinzu
                         if is_header {
                             let separator_line = format!("|{}|", row_texts.iter().map(|_| " --- ").collect::<Vec<_>>().join("|"));
                             slide_txt.push_str(&separator_line);
@@ -96,7 +136,6 @@ impl<'a> Slide<'a> {
                     slide_txt.push('\n');
                 },
                 SlideElement::List(list_element) => {
-                    // Vektor, um die Zähler für jede Ebene zu speichern
                     let mut counters: Vec<usize> = Vec::new();
                     let mut previous_level = 0;
 
@@ -136,7 +175,6 @@ impl<'a> Slide<'a> {
         Some(slide_txt)
     }
     
-
     pub fn extract_images_as_base64(&self) -> Option<Vec<String>> {
         let mut images_base64 = Vec::new();
 
@@ -165,6 +203,11 @@ impl<'a> Slide<'a> {
         }
     }
 
+    /// Links slide images references with their corresponding targets.
+    ///
+    /// Ensures that each image referenced by its ID is correctly 
+    /// linked to the actual internal resource paths stored in the slide.
+    /// This method is typically used internally after parsing a slide
     pub fn link_images(&mut self) {
         let id_to_target: HashMap<String, String> = self.images
             .iter()
