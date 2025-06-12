@@ -4,7 +4,7 @@
 //!
 //! Run with: cargo run --example basic_usage <path/to/your/presentation.pptx>
 
-use pptx_to_md::{PptxContainer, Result};
+use pptx_to_md::{PptxContainer, Result, ParserConfig};
 use std::env;
 use std::fs::File;
 use std::io::Write;
@@ -22,8 +22,13 @@ fn main() -> Result<()> {
 
     println!("Processing PPTX file: {}", pptx_path);
 
+    // Use the config builder to build your config
+    let config = ParserConfig::builder()
+        .extract_images(true)
+        .build();
+    
     // Open the PPTX file
-    let mut container = PptxContainer::open(Path::new(pptx_path))?;
+    let mut container = PptxContainer::open(Path::new(pptx_path), config)?;
 
     // Parse all slides
     let slides = container.parse_all()?;

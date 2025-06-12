@@ -5,7 +5,7 @@
 //!
 //! Run with: cargo run --example slide_elements <path/to/your/presentation.pptx>
 
-use pptx_to_md::{PptxContainer, Result, SlideElement};
+use pptx_to_md::{ParserConfig, PptxContainer, Result, SlideElement};
 use std::env;
 use std::path::Path;
 
@@ -21,8 +21,13 @@ fn main() -> Result<()> {
 
     println!("Processing PPTX file: {}", pptx_path);
 
+    // Use the config builder to build your config
+    let config = ParserConfig::builder()
+        .extract_images(true)
+        .build();
+    
     // Open the PPTX file with the streaming API
-    let mut streamer = PptxContainer::open(Path::new(pptx_path))?;
+    let mut streamer = PptxContainer::open(Path::new(pptx_path), config)?;
 
     // Process slides one by one using the iterator
     for slide_result in streamer.iter_slides() {

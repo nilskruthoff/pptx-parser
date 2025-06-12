@@ -8,7 +8,7 @@
 use std::env;
 use std::path::Path;
 use std::fs;
-use pptx_to_md::{PptxContainer, Result};
+use pptx_to_md::{ParserConfig, PptxContainer, Result};
 
 fn main() -> Result<()> {
     // Get the PPTX file path from command line arguments
@@ -22,8 +22,13 @@ fn main() -> Result<()> {
 
     println!("Processing PPTX file: {}", pptx_path);
 
+    // Use the config builder to build your config
+    let config = ParserConfig::builder()
+        .extract_images(true)
+        .build();
+    
     // Open the PPTX file with the streaming API
-    let mut streamer = PptxContainer::open(Path::new(pptx_path))?;
+    let mut streamer = PptxContainer::open(Path::new(pptx_path), config)?;
     
     // Create output directory
     let output_dir = "output_streaming";
