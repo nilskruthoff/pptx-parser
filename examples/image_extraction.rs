@@ -24,6 +24,8 @@ fn main() -> Result<()> {
     // Use the config builder to build your config
     let config = ParserConfig::builder()
         .extract_images(true)
+        .compress_images(true)
+        .quality(75)
         .build();
     
     // Open the PPTX file with the streaming API
@@ -44,12 +46,16 @@ fn main() -> Result<()> {
                     if let SlideElement::Image(img_ref) = element {
                         // Get image data from the slide's image_data HashMap
                         if let Some(image_data) = slide.image_data.get(&img_ref.id) {
-                            // Determine image extension from target
-                            let extension = img_ref.target
-                                .split('.')
-                                .next_back()
-                                .unwrap_or("bin");
+                            // Image data will be compressed if the config is true, otherwise its unchanged
+                            let image_data = slide.config.compress_images
+                                .then(|| slide.compress_image(image_data))
+                                .unwrap_or(Option::from(image_data.clone()));
 
+                            // Extract image extension if the image is not compressed, otherwise its always `.jpg`
+                            let ext = slide.config.compress_images
+                                .then(|| "jpg".to_string())
+                                .unwrap_or_else(|| slide.get_image_extension(&img_ref.target.clone()));
+                            
                             // Save the image
                             let output_path = format!(
                                 "{}/slide{}_image{}_{}.{}",
@@ -57,12 +63,17 @@ fn main() -> Result<()> {
                                 slide.slide_number,
                                 element_idx,
                                 &img_ref.id,
-                                extension
+                                ext
                             );
 
-                            fs::write(&output_path, image_data)?;
-                            println!("Saved image to {}", output_path);
-                            image_count += 1;
+                            match image_data {
+                                Some(image_data) => {
+                                    fs::write(&output_path, image_data)?;
+                                    println!("Saved image to {}", output_path);
+                                    image_count += 1;
+                                },
+                                None => {}
+                            }
                         }
                     }
                 }

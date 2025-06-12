@@ -1,4 +1,4 @@
-﻿use pptx_to_md::{Formatting, ListElement, ListItem, Run, Slide, SlideElement, TableCell, TableElement, TableRow, TextElement};
+﻿use pptx_to_md::{Formatting, ListElement, ListItem, ParserConfig, Run, Slide, SlideElement, TableCell, TableElement, TableRow, TextElement};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -43,6 +43,7 @@ fn test_markdown_table_conversion() {
         ],
         images: vec![],
         image_data: HashMap::new(),
+        config: ParserConfig::default(),
     };
     let md_result = slide.convert_to_md().unwrap();
 
@@ -71,6 +72,7 @@ fn test_markdown_list_conversion() {
         ],
         images: vec![],
         image_data: HashMap::new(),
+        config: ParserConfig::default(),
     };
 
     let md_result = slide.convert_to_md().unwrap();
@@ -96,6 +98,7 @@ fn test_formatting_conversion() {
         ],
         images: vec![],
         image_data: HashMap::new(),
+        config: ParserConfig::default(),
     };
 
     let md_result = slide.convert_to_md().unwrap();

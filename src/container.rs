@@ -127,6 +127,8 @@ impl PptxContainer {
                 }
             }
         }
+        
+        let config = self.config.clone();
 
         let mut slide = Slide::new(
             slide_path.to_string(),
@@ -134,6 +136,7 @@ impl PptxContainer {
             elements,
             images,
             image_data,
+            config,
         );
 
         slide.link_images();

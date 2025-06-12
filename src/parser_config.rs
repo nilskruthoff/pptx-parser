@@ -8,6 +8,8 @@
 /// | Parameter | Type | Default | Description |
 /// |-----------|------|---------|-------------|
 /// | `extract_images` | `bool` | `true` | Whether images are extracted from slides or not |
+/// | `compress_images` | `bool` | `true` | Whether images are compressed before encoding or not |
+/// | `image_quality` | `u8` | `80` | Compression level (0-100);<br/> higher values retain more detail but increase file size |
 ///
 /// # Example
 ///
@@ -21,12 +23,16 @@
 #[derive(Debug, Clone)]
 pub struct ParserConfig {
     pub extract_images: bool,
+    pub compress_images: bool,
+    pub quality: u8,
 }
 
 impl Default for ParserConfig {
     fn default() -> Self {
         Self { 
-            extract_images: true 
+            extract_images: true,
+            compress_images: true,
+            quality: 80,
         }
     }
 }
@@ -43,6 +49,8 @@ impl ParserConfig {
 #[derive(Debug, Default)]
 pub struct ParserConfigBuilder {
     extract_images: Option<bool>,
+    compress_images: Option<bool>,
+    image_quality: Option<u8>,
 }
 
 impl ParserConfigBuilder {
@@ -51,11 +59,27 @@ impl ParserConfigBuilder {
         self.extract_images = Some(value);
         self
     }
+    
+    /// Sets weather images should be compressed before encoded to base64 or not
+    pub fn compress_images(mut self, value: bool) -> Self {
+        self.compress_images = Some(value);
+        self
+    }
+    
+    /// Specifies the desired image quality where `100` is the original quality and `50` means half the quality
+    /// The lower the quality, the smaller the file size of the output image will be
+    pub fn quality(mut self, value: u8) -> Self {
+        self.image_quality = Some(value);
+        self
+    }
+    
 
     /// Builds the final [`ParserConfig`] instance, applying default values for any fields that were not set.
     pub fn build(self) -> ParserConfig {
         ParserConfig {
             extract_images: self.extract_images.unwrap_or(true),
+            compress_images: self.compress_images.unwrap_or(true),
+            quality: self.image_quality.unwrap_or(80),
         }
     }
 }
