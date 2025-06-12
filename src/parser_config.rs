@@ -9,8 +9,8 @@
 /// |-----------|------|---------|-------------|
 /// | `extract_images` | `bool` | `true` | Whether images are extracted from slides or not |
 /// | `compress_images` | `bool` | `true` | Whether images are compressed before encoding or not |
-/// | `image_quality` | `u8` | `80` | Compression level (0-100);<br/> higher values retain more detail but increase file size |
-/// | `image_size_ratio` | `u8` | `80` | Scaling factor for image dimensions (0-100);<br/> smaller values reduce resolution and file size |
+/// | `image_quality` | `f32` | `80.0` | Compression level (0.0-100.0);<br/> higher values retain more detail but increase file size |
+/// | `image_size_ratio` | `f32` | `0.8` | Scaling factor for image dimensions (0-1.0);<br/> smaller values reduce resolution and file size |
 ///
 /// # Example
 ///
@@ -25,8 +25,8 @@
 pub struct ParserConfig {
     pub extract_images: bool,
     pub compress_images: bool,
-    pub quality: u8,
-    pub size_ratio: u8,
+    pub quality: f32,
+    pub size_ratio: f32,
 }
 
 impl Default for ParserConfig {
@@ -34,8 +34,8 @@ impl Default for ParserConfig {
         Self { 
             extract_images: true,
             compress_images: true,
-            quality: 80,
-            size_ratio: 80,
+            quality: 80.0,
+            size_ratio: 0.8,
         }
     }
 }
@@ -53,8 +53,8 @@ impl ParserConfig {
 pub struct ParserConfigBuilder {
     extract_images: Option<bool>,
     compress_images: Option<bool>,
-    image_quality: Option<u8>,
-    image_size_ratio: Option<u8>,
+    image_quality: Option<f32>,
+    image_size_ratio: Option<f32>,
 }
 
 impl ParserConfigBuilder {
@@ -72,7 +72,7 @@ impl ParserConfigBuilder {
     
     /// Specifies the desired image quality where `100` is the original quality and `50` means half the quality
     /// The lower the quality, the smaller the file size of the output image will be
-    pub fn quality(mut self, value: u8) -> Self {
+    pub fn quality(mut self, value: f32) -> Self {
         self.image_quality = Some(value);
         self
     }
@@ -80,7 +80,7 @@ impl ParserConfigBuilder {
     /// Specifies the ratio of the new size compared to the original image, where `100` is the size of the origional
     /// image and `50` halves the _width_ and _height_.
     /// The lower the image size, the smaller the file size of the output image will be
-    pub fn size_ratio(mut self, value: u8) -> Self {
+    pub fn size_ratio(mut self, value: f32) -> Self {
         self.image_size_ratio = Some(value);
         self
     }
@@ -90,8 +90,8 @@ impl ParserConfigBuilder {
         ParserConfig {
             extract_images: self.extract_images.unwrap_or(true),
             compress_images: true,
-            quality: 80,
-            size_ratio: 80,
+            quality: 80.0,
+            size_ratio: 0.8,
         }
     }
 }
