@@ -83,11 +83,13 @@ pptx-to-md/
 │   ├── memory_efficient_streaming.rs
 │   └── slide_elements.rs
 ├── src/
-│   ├── lib.rs          # Public API
-│   ├── container.rs    # Pptx container handling
-│   ├── slide.rs        # Individual slide representation & markdown conversion
-│   ├── parse_xml.rs    # XML parsing logic
-│   └── types.rs        # Common data types used
+│   ├── lib.rs            # Public API
+│   ├── container.rs      # Pptx container handling
+│   ├── parser_config.rs  # Config and config builder
+│   ├── slide.rs          # Individual slide representation & markdown conversion
+│   ├── parse_xml.rs      # XML parsing logic
+│   ├── parse_rels.rs     # Relationship parsing logic
+│   └── types.rs          # Common data types used
 ├── tests/
 │   ├── test_data/      # XML & MD test data files
 └── └── slide_tests.rs  # tests for md conversion logic
