@@ -62,9 +62,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Config Parameters
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `extract_images` | `bool` | `true` | Whether images are extracted from slides or not |
+| Parameter | Type | Default | Description                                                                                                                                                   |
+|-----------|------|---------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `extract_images` | `bool` | `true` | Whether images are extracted from slides or not                                                                                                               |
+| `compress_images` | `bool` | `true` | Whether images are compressed before encoding or not                                                                                                          |
+| `image_quality` | `u8` | `80` | Defines the image compression quality `(0-100)`. Higher values mean better quality but larger file sizes.                                                     |
+| `image_size_ratio` | `u8` | `80` | Determines the scaling factor for images `(0-100)` (e.g., 80 reduces dimensions to 80% of the original size).; Smaller values reduce resolution and file size |
 
 ---
 
