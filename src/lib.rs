@@ -4,8 +4,10 @@ mod types;
 mod constants;
 mod parse_xml;
 mod parse_rels;
+mod parser_config;
 
 pub use container::PptxContainer;
+pub use parser_config::ParserConfig;
 pub use slide::Slide;
 pub use types::*;
 

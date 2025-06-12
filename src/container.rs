@@ -4,6 +4,7 @@ use std::{
     io::Read,
     path::Path,
 };
+use crate::parser_config::ParserConfig;
 
 /// Holds the internal representation of a loaded PowerPoint (pptx) container.
 ///
@@ -11,6 +12,7 @@ use std::{
 /// directly from a loaded pptx file. It parses and stores XML slides content,
 /// relationships (`rels`) files, and associated resources such as images.
 pub struct PptxContainer {
+    config: ParserConfig,
     archive: zip::ZipArchive<std::fs::File>,
     slide_paths: Vec<String>,
 }
@@ -34,7 +36,7 @@ impl PptxContainer {
     /// # Errors
     ///
     /// Errors are returned on file access problems or failures during the unzipping process.
-    pub fn open(path: &Path) -> Result<Self> {
+    pub fn open(path: &Path, config: ParserConfig) -> Result<Self> {
         let file = std::fs::File::open(path)?;
         let mut archive = zip::ZipArchive::new(file)?;
 
@@ -51,7 +53,7 @@ impl PptxContainer {
 
         slide_paths.sort();
 
-        Ok(Self { archive, slide_paths })
+        Ok(Self { archive, slide_paths, config })
     }
 
     /// Parses the data of all slides for each path present in the containers' `slide_path` vector.
@@ -105,21 +107,24 @@ impl PptxContainer {
         let rels_path = self.get_slide_rels_path(slide_path);
         let rels_data = self.read_file_from_archive(&rels_path).ok();
 
-        // extract images from relationships
-        let mut images = Vec::new();
-        if let Some(ref rels_bytes) = rels_data {
-            images = crate::parse_rels::parse_slide_rels(rels_bytes)?;
-        }
-
         // parse slide and preload images
         let slide_number = Slide::extract_slide_number(slide_path).unwrap_or(0);
         let elements = crate::parse_xml::parse_slide_xml(&slide_data)?;
-
+        
+        let mut images = Vec::new();
         let mut image_data = HashMap::new();
-        for img_ref in &images {
-            let img_path = Self::get_full_image_path(slide_path, &img_ref.target);
-            if let Ok(data) = self.read_file_from_archive(&img_path) {
-                image_data.insert(img_ref.id.clone(), data);
+        
+        if self.config.extract_images {
+            // extract images from relationships
+            if let Some(ref rels_bytes) = rels_data {
+                images = crate::parse_rels::parse_slide_rels(rels_bytes)?;
+            }
+
+            for img_ref in &images {
+                let img_path = Self::get_full_image_path(slide_path, &img_ref.target);
+                if let Ok(data) = self.read_file_from_archive(&img_path) {
+                    image_data.insert(img_ref.id.clone(), data);
+                }
             }
         }
 

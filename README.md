@@ -20,46 +20,35 @@
 
 ---
 
-## 📦 Installation
-
-Include the following line in your Cargo.toml dependencies section:
-
-```toml
-[dependencies]
-pptx-to-md = "0.1" # replace with the current version
-```
-
----
-
 ## 👨‍💻 Example Usage
 
-Here's an easy example to convert a PowerPoint slide into Markdown:
+Here's an easy example to convert a PowerPoint slide into Markdown*:
 
 ```rust
-use pptx_to_md::PptxContainer;
+use pptx_to_md::{PptxContainer, ParserConfig};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let path = Path::new("presentation.pptx");
-    let pptx_container = PptxContainer::open(path)?;
-    let slides = pptx_container.parse()?;
+    let config = ParserConfig::builder()
+        .extract_images(true)
+        .build();
+    let pptx_container = PptxContainer::open(Path::new("presentation.pptx"), config)?;
+    let slides = container.parse_all()?;
     
-    
-    /// access each slide present in the pptx container
     for slide in slides {
-        /// convert slide content to markdown
-        if let Some(md) = slide.convert_to_md() {
-            println!("Slide {}: \n{}", slide.slide_number, md);
+        // Convert each slide into Markdown
+        if let Some(md_content) = slide.convert_to_md() {
+            println!("{}", md_content);
         }
 
-        /// Access the `SlideElements` containing the parsed xml
-        for element in slide_elements {
+        // Or iterate over each slide element and match them to add custom logic
+        for element in &slide.elements {
             match element {
-                SlideElement::Text(text) => println!("Text element: {:?}", text),
-                SlideElement::Table(table) => println!("Table element: {:?}", table),
-                SlideElement::Image(image) => println!("Image element: {:?}", image),
-                SlideElement::List(list) => println!("List element: {:?}", list),
-                SlideElement::Unknown => println!("Unknown or unsupported element detected"),
+                SlideElement::Text(text) => { println!("{:?}\n", text) }
+                SlideElement::Table(table) => { println!("{:?}\n", table) }
+                SlideElement::Image(image) => { println!("{:?}\n", image) }
+                SlideElement::List(list) => { println!("{:?}\n", list) }
+                SlideElement::Unknown => { println!("An Unknown element was found.\n") }
             }
         }
     }
@@ -68,6 +57,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+*for more usage examples refer to the [examples](https://github.com/nilskruthoff/pptx-parser/tree/master/examples) directory
+
+---
+
+## Config Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `extract_images` | `bool` | `true` | Whether images are extracted from slides or not |
+
 ---
 
 ## 🏗 Project Structure
@@ -75,6 +74,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 pptx-to-md/
 ├── Cargo.toml
 ├── README.md
+├── CHANGELOG.md
+├── LICENSE-MIT
+├── LICENSE-APACHE
+├── examples/           # Simple examples to present the usage of this crate
+│   ├── basic_usage.rs
+│   ├── image_extractions.rs
+│   ├── memory_efficient_streaming.rs
+│   └── slide_elements.rs
 ├── src/
 │   ├── lib.rs          # Public API
 │   ├── container.rs    # Pptx container handling
@@ -84,6 +91,17 @@ pptx-to-md/
 ├── tests/
 │   ├── test_data/      # XML & MD test data files
 └── └── slide_tests.rs  # tests for md conversion logic
+```
+
+---
+
+## 📦 Installation
+
+Include the following line in your Cargo.toml dependencies section:
+
+```toml
+[dependencies]
+pptx-to-md = "0.1.2" # replace with the current version
 ```
 
 ---
