@@ -20,17 +20,6 @@
 
 ---
 
-## 📦 Installation
-
-Include the following line in your Cargo.toml dependencies section:
-
-```toml
-[dependencies]
-pptx-to-md = "0.1.2" # replace with the current version
-```
-
----
-
 ## 👨‍💻 Example Usage
 
 Here's an easy example to convert a PowerPoint slide into Markdown*:
@@ -72,6 +61,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ---
 
+## Config Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `extract_images` | `bool` | `true` | Whether images are extracted from slides or not |
+
+---
+
 ## 🏗 Project Structure
 ```
 pptx-to-md/
@@ -94,6 +91,17 @@ pptx-to-md/
 ├── tests/
 │   ├── test_data/      # XML & MD test data files
 └── └── slide_tests.rs  # tests for md conversion logic
+```
+
+---
+
+## 📦 Installation
+
+Include the following line in your Cargo.toml dependencies section:
+
+```toml
+[dependencies]
+pptx-to-md = "0.1.2" # replace with the current version
 ```
 
 ---
