@@ -1,6 +1,9 @@
-﻿use crate::{ImageReference, SlideElement};
+﻿use crate::{ImageReference, ParserConfig, SlideElement};
 use base64::{engine::general_purpose, Engine as _};
 use std::collections::HashMap;
+use std::io::Cursor;
+use std::path::Path;
+use image::ImageOutputFormat;
 
 /// Represents a single slide extracted from a PowerPoint (pptx) file.
 ///
@@ -18,6 +21,7 @@ pub struct Slide {
     pub elements: Vec<SlideElement>,
     pub images: Vec<ImageReference>,
     pub image_data: HashMap<String, Vec<u8>>,
+    pub config: ParserConfig
 }
 
 impl Slide {
@@ -27,6 +31,7 @@ impl Slide {
         elements: Vec<SlideElement>,
         images: Vec<ImageReference>,
         image_data: HashMap<String, Vec<u8>>,
+        config: ParserConfig,
     ) -> Self {
         Self {
             rel_path,
@@ -34,6 +39,7 @@ impl Slide {
             elements,
             images,
             image_data,
+            config,
         }
     }
 
@@ -86,14 +92,18 @@ impl Slide {
                 },
                 SlideElement::Image(image_ref) => {
                     if let Some(image_data) = self.image_data.get(&image_ref.id) {
-                        let base64_string = general_purpose::STANDARD.encode(image_data);
+                        let image_data = self.config.compress_images
+                            .then(|| self.compress_image(image_data))
+                            .unwrap_or(Option::from(image_data.clone()));
+
+                        let base64_string = general_purpose::STANDARD.encode(image_data?);
                         let image_name = &image_ref.target.split('/').last()?;
                         let file_ext = &image_name.split('.').last()?;
-                        slide_txt.push_str(format!("![{}](data:image/{};base64,{})",
-                                                   image_name, file_ext, base64_string).as_str());
+
+                        slide_txt.push_str(format!("![{}](data:image/{};base64,{})", image_name, file_ext, base64_string).as_str());
                     }
                     slide_txt.push('\n');
-                },
+                }
                 SlideElement::List(list_element) => {
                     let mut counters: Vec<usize> = Vec::new();
                     let mut previous_level = 0;
@@ -168,4 +178,40 @@ impl Slide {
             }
         }
     }
+
+    /// Extracts the file extension from image paths
+    pub fn get_image_extension(&self, path: &str) -> String {
+        Path::new(path)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("bin")
+            .to_string()
+    }
+
+    /// Compresses the image data and returning it as a jpg byte slice
+    /// 
+    /// # Parameter
+    /// 
+    /// - `image_data`: The raw image data as a byte array
+    /// 
+    /// # Returns
+    /// 
+    /// - `Vec<u8>`: Returns the compressed and converted jpg byte array
+    pub fn compress_image(&self, image_data: &[u8]) -> Option<Vec<u8>> {
+        let img = match image::load_from_memory(image_data) {
+            Ok(image) => image,
+            Err(_) => return None,
+        };
+
+        let mut output = Vec::new();
+        let quality = self.config.quality;
+
+        if img.write_to(&mut Cursor::new(&mut output), ImageOutputFormat::Jpeg(quality)).is_ok() {
+            Some(output)
+        } else {
+            None
+        }
+    }
+
+
 }
