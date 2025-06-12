@@ -62,12 +62,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Config Parameters
 
-| Parameter | Type   | Default | Description                                                                                                                                                    |
-|-----------|--------|---------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `extract_images` | `bool` | `true`  | Whether images are extracted from slides or not                                                                                                                |
-| `compress_images` | `bool` | `true`  | Whether images are compressed before encoding or not                                                                                                           |
-| `image_quality` | `f32`  | `80.0`  | Defines the image compression quality `(0.0-100.0)`. Higher values mean better quality but larger file sizes.                                                  |
-| `image_size_ratio` | `f32`  | `0.8`   | Determines the scaling factor for images `(0-1.0)` (e.g., 0.8 reduces dimensions to 80% of the original size).; Smaller values reduce resolution and file size |
+| Parameter | Type   | Default | Description                                                                                                                                                |
+|-----------|--------|-------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `extract_images` | `bool` | `true` | Whether images are extracted from slides or not                                                                                                            |
+| `compress_images` | `bool` | `true` | Whether images are compressed before encoding or not                                                                                                       |
+| `image_quality` | `u8`   | `80`  | Defines the image compression quality `(0-100)`. Higher values mean better quality but larger file sizes.                                                  |
 
 ---
 
