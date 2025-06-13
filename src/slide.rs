@@ -164,6 +164,16 @@ impl Slide {
     /// Ensures that each image referenced by its ID is correctly 
     /// linked to the actual internal resource paths stored in the slide.
     /// This method is typically used internally after parsing a slide
+    ///
+    /// # Notes
+    ///
+    /// Internally those are the values image references are holding
+    ///
+    /// | Parameter | Example value         |
+    /// |---------- |---------------------- |
+    /// | `id`      | *rId2*                |
+    /// | `target`  | *../media/image2.png* |
+    ///
     pub fn link_images(&mut self) {
         let id_to_target: HashMap<String, String> = self.images
             .iter()
@@ -188,7 +198,7 @@ impl Slide {
             .to_string()
     }
 
-    /// Compresses the image data and returning it as a jpg byte slice
+    /// Compresses the image data and returning it as a `jpg` byte slice
     /// 
     /// # Parameter
     /// 
@@ -197,6 +207,10 @@ impl Slide {
     /// # Returns
     /// 
     /// - `Vec<u8>`: Returns the compressed and converted jpg byte array
+    ///
+    /// # Notes
+    ///
+    /// All images will be converted to `jpg`
     pub fn compress_image(&self, image_data: &[u8]) -> Option<Vec<u8>> {
         let img = match image::load_from_memory(image_data) {
             Ok(image) => image,
@@ -212,6 +226,93 @@ impl Slide {
             None
         }
     }
+}
 
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    // Note this useful idiom: importing names from outer (for mod tests) scope.
+    use super::*;
+    
+    fn mock_slide() -> Slide {
+        Slide {
+            rel_path: "ppt/slides/slide1.xml".to_string(),
+            slide_number: 1,
+            elements: vec![],
+            images: vec![],
+            image_data: HashMap::new(),
+            config: ParserConfig::default(),
+        }
+    }
 
+    fn load_image_data(filename: &str) -> Vec<u8> {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests");
+        path.push("test_data");
+        path.push(filename);
+        fs::read(path).expect("Unable to read test data file")
+    }
+    
+    #[test]
+    fn test_extract_slide_number() {
+        let input = "ppt/slides/slide5.xml";
+        
+        let actual = Slide::extract_slide_number(input).unwrap();
+        let expected: u32 = 5;
+        
+        assert_eq!(actual, expected);
+    }
+    
+    #[test]
+    fn test_get_image_extension() {
+        let slide = mock_slide();
+        let input = "../media/image1.png";
+        
+        let actual = slide.get_image_extension(input);
+        let expected = "png";
+        
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_link_images() {
+        let mut slide = mock_slide();
+
+        slide.images.push(ImageReference { id: "rId2".to_string(), target: "../media/image1.png".to_string() });
+        slide.elements.push(SlideElement::Image(ImageReference { id: "rId2".to_string(), target: "".to_string() }));
+
+        slide.link_images();
+
+        if let SlideElement::Image(img_ref) = &slide.elements[0] {
+            assert_eq!(img_ref.target, "../media/image1.png");
+        }
+    }
+
+    #[test]
+    fn test_image_compression_reduces_size() {
+        let mut slide = mock_slide();
+        slide.config.quality = 50;
+
+        let raw_image = load_image_data("example-image.jpg");
+
+        if let Some(compression_result) = slide.compress_image(&*raw_image) {
+            assert!(compression_result.len() < raw_image.len());
+        } else {
+            panic!("Compression failed");
+        }
+    }
+
+    #[test]
+    fn test_compressed_image_is_valid_jpg() {
+        let slide = mock_slide();
+        let raw_image = load_image_data("example-image.jpg");
+
+        if let Some(compression_result) = slide.compress_image(&*raw_image) {
+            let result = image::load_from_memory(&compression_result);
+            assert!(result.is_ok());
+        } else {
+            panic!("Compression failed");
+        }
+    }
 }
