@@ -1,0 +1,32 @@
+﻿<p:txBody xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+          xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+    <a:bodyPr/>
+    <a:lstStyle/>
+    <a:p>
+        <a:pPr lvl="0">
+            <a:buChar char="•"/>
+        </a:pPr>
+        <a:r>
+            <a:rPr lang="en-US" dirty="0"/>
+            <a:t>First item</a:t>
+        </a:r>
+    </a:p>
+    <a:p>
+        <a:pPr lvl="0">
+            <a:buChar char="•"/>
+        </a:pPr>
+        <a:r>
+            <a:rPr lang="en-US" dirty="0"/>
+            <a:t>Second item</a:t>
+        </a:r>
+    </a:p>
+    <a:p>
+        <a:pPr lvl="0">
+            <a:buChar char="•"/>
+        </a:pPr>
+        <a:r>
+            <a:rPr lang="en-US" dirty="0"/>
+            <a:t>Third item</a:t>
+        </a:r>
+    </a:p>
+</p:txBody>

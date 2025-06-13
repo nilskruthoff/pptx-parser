@@ -232,7 +232,7 @@ impl Slide {
 mod tests {
     use std::fs;
     use std::path::PathBuf;
-    // Note this useful idiom: importing names from outer (for mod tests) scope.
+    
     use super::*;
     
     fn mock_slide() -> Slide {

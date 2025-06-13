@@ -1,0 +1,35 @@
+﻿<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+    <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">
+        <a:tbl>
+            <a:tr>
+                <a:tc>
+                    <a:txBody>
+                        <a:p></a:p>
+                    </a:txBody>
+                </a:tc>
+                <a:tc>
+                    <a:txBody>
+                        <a:p></a:p>
+                    </a:txBody>
+                </a:tc>
+            </a:tr>
+            <a:tr>
+                <a:tc>
+                    <a:txBody>
+                        <a:p></a:p>
+                    </a:txBody>
+                </a:tc>
+                <a:tc>
+                    <a:txBody>
+                        <a:p>
+                            <a:r>
+                                <a:rPr lang="de-DE" dirty="0"/>
+                                <a:t>Only content</a:t>
+                            </a:r>
+                        </a:p>
+                    </a:txBody>
+                </a:tc>
+            </a:tr>
+        </a:tbl>
+    </a:graphicData>
+</a:graphic>

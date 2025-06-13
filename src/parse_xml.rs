@@ -359,3 +359,576 @@ fn parse_run(r_node: &Node) -> Result<Run> {
     }
     Ok(Run { text, formatting })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use super::*;
+
+    fn load_xml(filename: &str) -> String {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests");
+        path.push("test_data");
+        path.push("xml");
+        path.push(filename);
+        fs::read_to_string(path).expect("Unable to read test data file")
+    }
+
+    fn normalize_test_string(input: &str) -> String {
+        input
+            .trim_start_matches('\u{feff}') // remove BOM
+            .replace("\r\n", "\n") // normalize line breaks
+            .replace("    ", "\t") // replace 4 whitespaces with a tab
+            .trim() // trim leading and trailing whitespace
+            .to_string()
+    }
+
+    #[test]
+    fn test_parse_text() {
+        let xml_data = load_xml("tx_body.xml");
+        let doc = Document::parse(&*xml_data).expect("Parsing XML failes");
+        let tx_body_node = doc.root_element();
+
+        match parse_text(&tx_body_node) {
+            Ok(SlideElement::Text(text_element)) => {
+                assert_eq!(text_element.runs.len(), 3);
+                assert_eq!(normalize_test_string(&text_element.runs[0].text), normalize_test_string("Hello"));
+                assert_eq!(normalize_test_string(&text_element.runs[1].text), normalize_test_string("World"));
+                assert_eq!(normalize_test_string(&text_element.runs[2].text), normalize_test_string("!"));
+            },
+            Err(_) => panic!("Fehler beim Parsen der XML-Datei"),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn test_parse_run_with_format() {
+        let xml_data = load_xml("run_styles.xml");
+        let doc = Document::parse(&*xml_data).expect("Parsing XML failed");
+        let r_node = doc.root_element();
+
+        match parse_run(&r_node) {
+            Ok(run) => {
+                assert_eq!(normalize_test_string(&run.text), normalize_test_string("Formatted text"));
+                assert!(run.formatting.bold);
+                assert!(run.formatting.italic);
+                assert!(run.formatting.underlined);
+                assert_eq!(run.formatting.lang, "de-DE");
+            },
+            Err(_) => panic!("Fehler beim Parsen des Runs mit Formatierung")
+        }
+    }
+
+    #[test]
+    fn test_parse_run_no_format() {
+        let xml_data = load_xml("run_no_format.xml");
+        let doc = Document::parse(&*xml_data).expect("Parsing XML failed");
+        let r_node = doc.root_element();
+
+        match parse_run(&r_node) {
+            Ok(run) => {
+                assert_eq!(normalize_test_string(&run.text), normalize_test_string("Unformatted text"));
+                assert!(!run.formatting.bold);
+                assert!(!run.formatting.italic);
+                assert!(!run.formatting.underlined);
+            },
+            Err(_) => panic!("Fehler beim Parsen des Runs ohne Formatierung")
+        }
+    }
+
+
+    #[test]
+    fn test_parse_run_empty_text() {
+        let xml_data = load_xml("run_empty.xml");
+        let doc = Document::parse(&*xml_data).expect("Parsing XML failed");
+        let r_node = doc.root_element();
+
+        match parse_run(&r_node) {
+            Ok(run) => {
+                assert_eq!(run.text, "");
+            },
+            Err(_) => panic!("Failed to parse an empty Run")
+        }
+    }
+
+    #[test]
+    fn test_parse_paragraph_single() {
+        let xml_data = load_xml("paragraph_single.xml");
+        let doc = Document::parse(&*xml_data).expect("Parsing XML failed");
+        let p_node = doc.root_element();
+
+        match parse_paragraph(&p_node, true) {
+            Ok(runs) => {
+                assert_eq!(runs.len(), 1);
+                assert_eq!(normalize_test_string(&runs[0].text), normalize_test_string("Single run\n"));
+            },
+            Err(_) => panic!("Failed to parse paragraph with a single run")
+        }
+    }
+
+    #[test]
+    fn test_parse_paragraph_multiple() {
+        let xml_data = load_xml("paragraph_multiple.xml");
+        let doc = Document::parse(&*xml_data).expect("Parsing XML failed");
+        let p_node = doc.root_element();
+
+        match parse_paragraph(&p_node, true) {
+            Ok(runs) => {
+                assert_eq!(runs.len(), 3);
+                assert_eq!(normalize_test_string(&runs[0].text), normalize_test_string("First run"));
+                assert_eq!(normalize_test_string(&runs[1].text), normalize_test_string("Second run"));
+                assert_eq!(normalize_test_string(&runs[2].text), normalize_test_string("Third run\n"));
+                assert!(runs[1].formatting.bold);
+                assert!(runs[2].formatting.italic);
+            },
+            Err(_) => panic!("Failed to parse paragraph with multiple runs (`add_new_line: true)")
+        }
+
+        match parse_paragraph(&p_node, false) {
+            Ok(runs) => {
+                assert_eq!(runs.len(), 3);
+                assert!(!runs[2].text.ends_with('\n'));
+            },
+            Err(_) => panic!("Failed to parse paragraph with multiple runs (`add_new_line: false)`")
+        }
+    }
+
+    #[test]
+    fn test_parse_paragraph_empty() {
+        let xml_data = load_xml("paragraph_empty.xml");
+        let doc = Document::parse(&*xml_data).expect("Parsing XML failed");
+        let p_node = doc.root_element();
+
+        match parse_paragraph(&p_node, true) {
+            Ok(runs) => {
+                assert_eq!(runs.len(), 0);
+            },
+            Err(_) => panic!("Failed to parse paragraph with empty runs")
+        }
+    }
+
+    #[test]
+    fn test_parse_list_properties_unordered() {
+        // Test for unordered list properties
+        let xml_data = load_xml("simple_list.xml");
+        let doc = Document::parse(&*xml_data).expect("Failed to parse XML");
+
+        let p_node = doc.root_element()
+            .children()
+            .find(|n| n.is_element() && n.tag_name().name() == "p")
+            .expect("No paragraph element found");
+
+        match parse_list_properties(&p_node) {
+            Ok((level, is_ordered)) => {
+                assert_eq!(level, 0, "List level should be 0");
+                assert!(is_ordered, "List should be identified as ordered due to buChar element");
+            },
+            Err(_) => panic!("Failed to parse list properties")
+        }
+    }
+
+    #[test]
+    fn test_parse_list_properties_ordered() {
+        // Test for ordered list properties
+        let xml_data = load_xml("multilevel_list.xml");
+        let doc = Document::parse(&*xml_data).expect("Failed to parse XML");
+
+        // Get the first paragraph (level 0 with buAutoNum)
+        let p_node = doc.root_element()
+            .children()
+            .find(|n| n.is_element() && n.tag_name().name() == "p")
+            .expect("No paragraph element found");
+
+        match parse_list_properties(&p_node) {
+            Ok((level, is_ordered)) => {
+                assert_eq!(level, 0, "List level should be 0");
+                assert!(is_ordered, "List should be identified as ordered due to buAutoNum element");
+            },
+            Err(_) => panic!("Failed to parse ordered list properties")
+        }
+
+        // Get the second paragraph (level 1 with buChar)
+        let p_node = doc.root_element()
+            .children()
+            .filter(|n| n.is_element() && n.tag_name().name() == "p")
+            .nth(1)
+            .expect("Second paragraph element not found");
+
+        match parse_list_properties(&p_node) {
+            Ok((level, is_ordered)) => {
+                assert_eq!(level, 1, "List level should be 1");
+                assert!(is_ordered, "List should be identified as ordered due to buChar element");
+            },
+            Err(_) => panic!("Failed to parse level 1 list properties")
+        }
+
+        // Get the fourth paragraph (level 2 with buAutoNum)
+        let p_node = doc.root_element()
+            .children()
+            .filter(|n| n.is_element() && n.tag_name().name() == "p")
+            .nth(3)
+            .expect("Fourth paragraph element not found");
+
+        match parse_list_properties(&p_node) {
+            Ok((level, is_ordered)) => {
+                assert_eq!(level, 2, "List level should be 2");
+                assert!(is_ordered, "Level 2 list should be identified as ordered");
+            },
+            Err(_) => panic!("Failed to parse level 2 list properties")
+        }
+    }
+
+    #[test]
+    fn test_parse_simple_list() {
+        // Test for parsing a complete simple list
+        let xml_data = load_xml("simple_list.xml");
+        let doc = Document::parse(&*xml_data).expect("Failed to parse XML");
+        let tx_body_node = doc.root_element();
+
+        match parse_list(&tx_body_node) {
+            Ok(SlideElement::List(list)) => {
+                assert_eq!(list.items.len(), 3, "List should have 3 items");
+
+                // Check the first item
+                assert_eq!(list.items[0].level, 0, "First item should be level 0");
+                assert!(list.items[0].is_ordered, "First item should be ordered (has buChar)");
+                assert_eq!(normalize_test_string(&list.items[0].runs[0].text), normalize_test_string("First item\n"), "First item text mismatch");
+
+                // Check the second item
+                assert_eq!(list.items[1].level, 0, "Second item should be level 0");
+                assert!(list.items[1].is_ordered, "Second item should be ordered (has buChar)");
+                assert_eq!(normalize_test_string(&list.items[1].runs[0].text), normalize_test_string("Second item\n"), "Second item text mismatch");
+
+                // Check the third item
+                assert_eq!(list.items[2].level, 0, "Third item should be level 0");
+                assert!(list.items[2].is_ordered, "Third item should be ordered (has buChar)");
+                assert_eq!(normalize_test_string(&list.items[2].runs[0].text), normalize_test_string("Third item\n"), "Third item text mismatch");
+            },
+            Ok(_) => panic!("Expected a List element but got something else"),
+            Err(_) => panic!("Failed to parse simple list")
+        }
+    }
+
+    #[test]
+    fn test_parse_multilevel_list() {
+        // Test for parsing a multilevel list
+        let xml_data = load_xml("multilevel_list.xml");
+        let doc = Document::parse(&*xml_data).expect("Failed to parse XML");
+        let tx_body_node = doc.root_element();
+
+        match parse_list(&tx_body_node) {
+            Ok(SlideElement::List(list)) => {
+                assert_eq!(list.items.len(), 5, "List should have 5 items");
+
+                // Check first item (level 0, ordered)
+                assert_eq!(list.items[0].level, 0, "First item should be level 0");
+                assert!(list.items[0].is_ordered, "First item should be ordered");
+                assert_eq!(normalize_test_string(&list.items[0].runs[0].text), normalize_test_string("Main topic\n"), "First item text mismatch");
+
+                // Check second item (level 1, unordered but detected as ordered due to buChar)
+                assert_eq!(list.items[1].level, 1, "Second item should be level 1");
+                assert!(list.items[1].is_ordered, "Second item should be detected as ordered due to buChar");
+                assert_eq!(normalize_test_string(&list.items[1].runs[0].text), normalize_test_string("Subtopic bullet\n"), "Second item text mismatch");
+
+                // Check fourth item (level 2, ordered)
+                assert_eq!(list.items[3].level, 2, "Fourth item should be level 2");
+                assert!(list.items[3].is_ordered, "Fourth item should be ordered");
+                assert_eq!(normalize_test_string(&list.items[3].runs[0].text), normalize_test_string("Numbered sub-subtopic\n"), "Fourth item text mismatch");
+
+                // Check fifth item (back to level 0)
+                assert_eq!(list.items[4].level, 0, "Fifth item should be level 0");
+                assert!(list.items[4].is_ordered, "Fifth item should be ordered");
+                assert_eq!(normalize_test_string(&list.items[4].runs[0].text), normalize_test_string("Second main topic\n"), "Fifth item text mismatch");
+            },
+            Ok(_) => panic!("Expected a List element but got something else"),
+            Err(_) => panic!("Failed to parse multilevel list")
+        }
+    }
+
+    /// Test for a simple table for a cell with a single paragraph
+    #[test]
+    fn test_parse_table_cell_simple() {
+        let xml_data = load_xml("simple_table.xml");
+        let doc = Document::parse(&*xml_data).expect("Parsing XML failed");
+
+        let tc_node = doc.root_element()
+            .descendants()
+            .find(|n| n.is_element() && n.tag_name().name() == "tc")
+            .expect("Couldn't find tc node");
+
+        match parse_table_cell(&tc_node) {
+            Ok(cell) => {
+                assert_eq!(cell.runs.len(), 1);
+                assert_eq!(normalize_test_string(&cell.runs[0].text), normalize_test_string("Cell 1,1"));
+            },
+            Err(_) => panic!("Failed to parse the table cell")
+        }
+    }
+
+    /// Test for a complex table with multiple paragraphs in a table cell
+    #[test]
+    fn test_parse_table_cell_complex() {
+        let xml_data = load_xml("complex_table.xml");
+        let doc = Document::parse(&*xml_data).expect("Parsing XML failed");
+
+        // second row, first cell
+        let tc_node = doc.root_element()
+            .descendants()
+            .filter(|n| n.is_element() && n.tag_name().name() == "tc")
+            .nth(3)
+            .expect("Failed to find table cell with multiple paragraphs");
+
+        match parse_table_cell(&tc_node) {
+            Ok(cell) => {
+                assert_eq!(cell.runs.len(), 3);
+                assert_eq!(normalize_test_string(&cell.runs[0].text), normalize_test_string("Multiple"));
+                assert_eq!(normalize_test_string(&cell.runs[1].text), normalize_test_string("paragraphs"));
+                assert_eq!(normalize_test_string(&cell.runs[2].text), normalize_test_string("in one cell"));
+            },
+            Err(_) => panic!("Failed to parse table cell with multiple paragraphs")
+        }
+    }
+    #[test]
+    fn test_parse_table_cell_empty() {
+        let xml_data = load_xml("empty_table.xml");
+        let doc = Document::parse(&*xml_data).expect("Parsing XML failed");
+
+        let tc_node = doc.root_element()
+            .descendants()
+            .find(|n| n.is_element() && n.tag_name().name() == "tc")
+            .expect("Failed to find empty table cell");
+
+        match parse_table_cell(&tc_node) {
+            Ok(cell) => {
+                assert_eq!(cell.runs.len(), 0);
+            },
+            Err(_) => panic!("Failed to parse empty table cell")
+        }
+    }
+
+    #[test]
+    fn test_parse_table_row_simple() {
+        let xml_data = load_xml("simple_table.xml");
+        let doc = Document::parse(&*xml_data).expect("Parsing XML failed");
+
+        let tr_node = doc.root_element()
+            .descendants()
+            .find(|n| n.is_element() && n.tag_name().name() == "tr")
+            .expect("Couldn't find tc node");
+
+        match parse_table_row(&tr_node) {
+            Ok(row) => {
+                assert_eq!(row.cells.len(), 2);
+                assert_eq!(normalize_test_string(&row.cells[0].runs[0].text), normalize_test_string("Cell 1,1"));
+                assert_eq!(normalize_test_string(&row.cells[1].runs[0].text), normalize_test_string("Cell 1,2"));
+            },
+            Err(_) => panic!("Failed to parse the table row")
+        }
+    }
+
+    #[test]
+    fn test_parse_table_row_complex() {
+        let xml_data = load_xml("complex_table.xml");
+        let doc = Document::parse(&*xml_data).expect("Parsing XML failed");
+
+        let tr_node = doc.root_element()
+            .descendants()
+            .filter(|n| n.is_element() && n.tag_name().name() == "tr")
+            .nth(0) // Erste Zeile mit fetten Überschriften
+            .expect("Couldn't find a table row with formatting");
+
+        match parse_table_row(&tr_node) {
+            Ok(row) => {
+                assert_eq!(row.cells.len(), 3);
+                for i in 0..3 {
+                    assert!(row.cells[i].runs[0].formatting.bold);
+                    assert!(normalize_test_string(&row.cells[i].runs[0].text).starts_with("Heading"));
+                }
+            },
+            Err(_) => panic!("Failed to parse a table row with formatting")
+        }
+    }
+
+    #[test]
+    fn test_parse_simple_table() {
+        // Test for a simple table with 2x2 structure
+        let xml_data = load_xml("simple_table.xml");
+        let doc = Document::parse(&*xml_data).expect("Failed to parse XML");
+
+        let tbl_node = doc.root_element()
+            .descendants()
+            .find(|n| n.is_element() && n.tag_name().name() == "tbl")
+            .expect("No table element found");
+
+        match parse_table(&tbl_node) {
+            Ok(table) => {
+                assert_eq!(table.rows.len(), 2, "Table should have 2 rows");
+                assert_eq!(table.rows[0].cells.len(), 2, "First row should have 2 cells");
+                assert_eq!(table.rows[1].cells.len(), 2, "Second row should have 2 cells");
+
+                // Check contents of the first row
+                assert_eq!(normalize_test_string(&table.rows[0].cells[0].runs[0].text), normalize_test_string("Cell 1,1"), "Cell content mismatch");
+                assert_eq!(normalize_test_string(&table.rows[0].cells[1].runs[0].text), normalize_test_string("Cell 1,2"), "Cell content mismatch");
+
+                // Check contents of the second row
+                assert_eq!(normalize_test_string(&table.rows[1].cells[0].runs[0].text), normalize_test_string("Cell 2,1"), "Cell content mismatch");
+                assert_eq!(normalize_test_string(&table.rows[1].cells[1].runs[0].text), normalize_test_string("Cell 2,2"), "Cell content mismatch");
+            },
+            Err(_) => panic!("Failed to parse table structure")
+        }
+    }
+
+    #[test]
+    fn test_parse_complex_table() {
+        // Test for a complex table with different formatting and multiple paragraphs
+        let xml_data = load_xml("complex_table.xml");
+        let doc = Document::parse(&*xml_data).expect("Failed to parse XML");
+
+        let tbl_node = doc.root_element()
+            .descendants()
+            .find(|n| n.is_element() && n.tag_name().name() == "tbl")
+            .expect("No table element found");
+
+        match parse_table(&tbl_node) {
+            Ok(table) => {
+                assert_eq!(table.rows.len(), 2, "Table should have 2 rows");
+                assert_eq!(table.rows[0].cells.len(), 3, "First row should have 3 cells");
+                assert_eq!(table.rows[1].cells.len(), 3, "Second row should have 3 cells");
+
+                // Check bold formatting in headers
+                for i in 0..3 {
+                    assert!(table.rows[0].cells[i].runs[0].formatting.bold, "Header cell should have bold formatting");
+                    assert!(normalize_test_string(&table.rows[0].cells[i].runs[0].text).starts_with("Heading"), "Header should start with 'Heading'");
+                }
+
+                // Check the cell with multiple paragraphs
+                assert_eq!(table.rows[1].cells[0].runs.len(), 3);
+                assert_eq!(normalize_test_string(&table.rows[1].cells[0].runs[0].text), normalize_test_string("Multiple"), "First paragraph content mismatch");
+                assert_eq!(normalize_test_string(&table.rows[1].cells[0].runs[1].text), normalize_test_string("paragraphs"), "Second paragraph content mismatch");
+                assert_eq!(normalize_test_string(&table.rows[1].cells[0].runs[2].text), normalize_test_string("in one cell"), "Third paragraph content mismatch");
+
+                // Check the cell with italic text
+                assert!(table.rows[1].cells[1].runs[0].formatting.italic, "Text should have italic formatting");
+                assert_eq!(normalize_test_string(&table.rows[1].cells[1].runs[0].text), normalize_test_string("Cursive"), "Italic text content mismatch");
+            },
+            Err(_) => panic!("Failed to parse complex table structure")
+        }
+    }
+
+    #[test]
+    fn test_parse_empty_table() {
+        // Test for a table with empty cells
+        let xml_data = load_xml("empty_table.xml");
+        let doc = Document::parse(&*xml_data).expect("Failed to parse XML");
+
+        let tbl_node = doc.root_element()
+            .descendants()
+            .find(|n| n.is_element() && n.tag_name().name() == "tbl")
+            .expect("No table element found");
+
+        match parse_table(&tbl_node) {
+            Ok(table) => {
+                assert_eq!(table.rows.len(), 2, "Table should have 2 rows");
+                assert_eq!(table.rows[0].cells.len(), 2, "First row should have 2 cells");
+                assert_eq!(table.rows[1].cells.len(), 2, "Second row should have 2 cells");
+
+                // Check that empty cells have no runs
+                assert_eq!(table.rows[0].cells[0].runs.len(), 0, "Empty cell should have no runs");
+                assert_eq!(table.rows[0].cells[1].runs.len(), 0, "Empty cell should have no runs");
+                assert_eq!(table.rows[1].cells[0].runs.len(), 0, "Empty cell should have no runs");
+
+                // Check the one cell with content
+                assert_eq!(table.rows[1].cells[1].runs.len(), 1, "Cell should have one run");
+                assert_eq!(normalize_test_string(&table.rows[1].cells[1].runs[0].text), normalize_test_string("Only content"), "Cell content mismatch");
+            },
+            Err(_) => panic!("Failed to parse table with empty cells")
+        }
+    }
+
+    #[test]
+    fn test_parse_graphic_frame_with_table() {
+        // Test for a graphic frame containing a table
+        let xml_data = load_xml("simple_table.xml");
+        let doc = Document::parse(&*xml_data).expect("Failed to parse XML");
+        let node = doc.root_element();
+
+        match parse_graphic_frame(&node) {
+            Ok(Some(SlideElement::Table(table))) => {
+                assert_eq!(table.rows.len(), 2, "Table should have 2 rows");
+                assert_eq!(table.rows[0].cells.len(), 2, "First row should have 2 cells");
+
+                // Basic content check to confirm we got the right table
+                assert_eq!(normalize_test_string(&table.rows[0].cells[0].runs[0].text), normalize_test_string("Cell 1,1"), "Cell content mismatch");
+            },
+            Ok(None) => panic!("Should have found a table, but got None"),
+            Ok(_) => panic!("Found a different slide element, expected a table"),
+            Err(_) => panic!("Failed to parse graphic frame with table")
+        }
+    }
+
+    #[test]
+    fn test_parse_graphic_frame_without_table() {
+        // Test for a graphic frame that doesn't contain a table
+        let xml_data = load_xml("non_table_graphic.xml");
+        let doc = Document::parse(&*xml_data).expect("Failed to parse XML");
+        let node = doc.root_element();
+
+        match parse_graphic_frame(&node) {
+            Ok(None) => {
+                // This is the expected result - no table found
+            },
+            Ok(Some(_)) => panic!("Found a table where none should exist"),
+            Err(_) => panic!("Failed to parse non-table graphic frame")
+        }
+    }
+
+    #[test]
+    fn test_parse_pic_with_image() {
+        // Test for parsing a picture with a valid image reference
+        let xml_data = load_xml("pic_with_image.xml");
+        let doc = Document::parse(&*xml_data).expect("Failed to parse XML");
+        let pic_node = doc.root_element();
+
+        match parse_pic(&pic_node) {
+            Ok(SlideElement::Image(image_ref)) => {
+                assert_eq!(image_ref.id, "rId2", "Image reference ID should be 'rId2'");
+                assert_eq!(image_ref.target, "", "Image target should be empty initially");
+            },
+            Ok(_) => panic!("Expected an Image element but got something else"),
+            Err(e) => panic!("Failed to parse picture: {:?}", e)
+        }
+    }
+
+    #[test]
+    fn test_parse_pic_without_embed() {
+        // Test for parsing a picture without an embed attribute
+        let xml_data = load_xml("pic_without_embed.xml");
+        let doc = Document::parse(&*xml_data).expect("Failed to parse XML");
+        let pic_node = doc.root_element();
+
+        match parse_pic(&pic_node) {
+            Ok(_) => panic!("Should have failed due to missing embed attribute"),
+            Err(Error::ImageNotFound) => {
+                // This is the expected behavior - should fail with ImageNotFound
+            },
+            Err(e) => panic!("Expected ImageNotFound error but got: {:?}", e)
+        }
+    }
+
+    #[test]
+    fn test_parse_pic_without_blip() {
+        // Test for parsing a picture without a blip node
+        let xml_data = load_xml("pic_without_blip.xml");
+        let doc = Document::parse(&*xml_data).expect("Failed to parse XML");
+        let pic_node = doc.root_element();
+
+        match parse_pic(&pic_node) {
+            Ok(_) => panic!("Should have failed due to missing blip node"),
+            Err(Error::ImageNotFound) => {
+                // This is the expected behavior - should fail with ImageNotFound
+            },
+            Err(e) => panic!("Expected ImageNotFound error but got: {:?}", e)
+        }
+    }
+}

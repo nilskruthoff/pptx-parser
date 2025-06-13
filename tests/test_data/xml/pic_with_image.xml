@@ -1,0 +1,32 @@
+﻿<p:pic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+       xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+       xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+    <p:nvPicPr>
+        <p:cNvPr id="2" name="Picture 1"/>
+        <p:cNvPicPr>
+            <a:picLocks noChangeAspect="1"/>
+        </p:cNvPicPr>
+        <p:nvPr/>
+    </p:nvPicPr>
+    <p:blipFill>
+        <a:blip r:embed="rId2">
+            <a:extLst>
+                <a:ext uri="{28A0092B-C50C-407E-A947-70E740481C1C}">
+                    <a14:useLocalDpi xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main" val="0"/>
+                </a:ext>
+            </a:extLst>
+        </a:blip>
+        <a:stretch>
+            <a:fillRect/>
+        </a:stretch>
+    </p:blipFill>
+    <p:spPr>
+        <a:xfrm>
+            <a:off x="2286000" y="1524000"/>
+            <a:ext cx="3048000" cy="2286000"/>
+        </a:xfrm>
+        <a:prstGeom prst="rect">
+            <a:avLst/>
+        </a:prstGeom>
+    </p:spPr>
+</p:pic>
