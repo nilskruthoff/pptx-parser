@@ -47,3 +47,54 @@ pub fn parse_slide_rels(xml_data: &[u8]) -> Result<Vec<ImageReference>> {
 
     Ok(images)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+    use super::*;
+
+    fn load_xml(filename: &str) -> Vec<u8> {
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests");
+        path.push("test_data");
+        path.push("xml");
+        path.push(filename);
+        fs::read(path).expect("Unable to read test data file")
+    }
+
+    fn normalize_test_string(input: &str) -> String {
+        input
+            .trim_start_matches('\u{feff}') // remove BOM
+            .replace("\r\n", "\n") // normalize line breaks
+            .replace("    ", "\t") // replace 4 whitespaces with a tab
+            .trim() // trim leading and trailing whitespace
+            .to_string()
+    }
+
+    #[test]
+    fn test_parse_slide_rels_with_images() {
+        let xml_data = load_xml("rels_with_images.xml");
+        match parse_slide_rels(&xml_data) {
+            Ok(images) => {
+                assert_eq!(images.len(), 2);
+                assert_eq!(images[0].id, "rId1");
+                assert_eq!(normalize_test_string(&images[0].target), normalize_test_string("../media/image1.png"));
+                assert_eq!(images[1].id, "rId2");
+                assert_eq!(normalize_test_string(&images[1].target), normalize_test_string("../media/image2.jpg"));
+            },
+            Err(_) => panic!("Fehler beim Parsen der Slide-Relationships mit Bildern")
+        }
+    }
+
+    #[test]
+    fn test_parse_slide_rels_empty() {
+        let xml_data = load_xml("rels_without_images.xml");
+        match parse_slide_rels(&xml_data) {
+            Ok(images) => {
+                assert_eq!(images.len(), 0);
+            },
+            Err(_) => panic!("Fehler beim Parsen der leeren Slide-Relationships")
+        }
+    }
+}

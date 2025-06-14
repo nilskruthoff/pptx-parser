@@ -77,7 +77,7 @@ pub fn parse_slide_xml(xml_data: &[u8]) -> Result<Vec<SlideElement>> {
 }
 
 /// Parses the text body node (`<p:txBody>`) ito search for shape nodes (`<a:sp>`) and
-/// evaluates if a shape is formatted list or a common text
+/// evaluates if a shape is a formatted list or a common text
 fn parse_sp(sp_node: &Node) -> Result<SlideElement> {
     let tx_body_node = sp_node.children().find(|n| {
         n.is_element()
@@ -436,8 +436,7 @@ mod tests {
             Err(_) => panic!("Fehler beim Parsen des Runs ohne Formatierung")
         }
     }
-
-
+    
     #[test]
     fn test_parse_run_empty_text() {
         let xml_data = load_xml("run_empty.xml");
