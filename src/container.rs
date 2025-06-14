@@ -1,10 +1,11 @@
 ﻿use super::{Result, Slide};
+use crate::parser_config::ParserConfig;
+use rayon::prelude::*;
 use std::{
     collections::HashMap,
     io::Read,
     path::Path,
 };
-use crate::parser_config::ParserConfig;
 
 /// Holds the internal representation of a loaded PowerPoint (pptx) container.
 ///
@@ -12,9 +13,10 @@ use crate::parser_config::ParserConfig;
 /// directly from a loaded pptx file. It parses and stores XML slides content,
 /// relationships (`rels`) files, and associated resources such as images.
 pub struct PptxContainer {
-    config: ParserConfig,
+    pub config: ParserConfig,
     archive: zip::ZipArchive<std::fs::File>,
-    slide_paths: Vec<String>,
+    pub slide_paths: Vec<String>,
+    pub slide_count: u32,
 }
 
 impl PptxContainer {
@@ -41,6 +43,7 @@ impl PptxContainer {
         let mut archive = zip::ZipArchive::new(file)?;
 
         let mut slide_paths: Vec<String> = Vec::new();
+        let mut slide_count = 0;
 
         for i in 0..archive.len() {
             let file = archive.by_index(i)?;
@@ -48,12 +51,13 @@ impl PptxContainer {
 
             if name.starts_with("ppt/slides/slide") && name.ends_with(".xml") {
                 slide_paths.push(name);
+                slide_count += 1;
             }
         }
 
         slide_paths.sort();
 
-        Ok(Self { archive, slide_paths, config })
+        Ok(Self { archive, slide_paths, config, slide_count })
     }
 
     /// Parses the data of all slides for each path present in the containers' `slide_path` vector.
@@ -70,6 +74,89 @@ impl PptxContainer {
                 slides.push(slide);
             }
         }
+
+        Ok(slides)
+    }
+
+    /// Parses all slides in the presentation with optimised multithreaded processing.
+    ///
+    /// This method uses Rayon for parallel processing by:
+    /// 1. preloading all necessary data
+    /// 2. performing CPU-intensive processing in parallel
+    /// 3. ensuring memory efficiency and thread safety
+    ///
+    /// # Returns
+    ///
+    /// * `Result<Vec<Slide>>` - List of all parsed slides
+    pub fn parse_all_multi_threaded(&mut self) -> Result<Vec<Slide>> {
+        // Zuerst extrahieren wir alle Daten, die wir brauchen, im Voraus
+        let slide_paths: Vec<String> = self.slide_paths.to_vec();
+        let config = self.config.clone();
+
+        // Vorausladen aller benötigten Daten, einschließlich Bilddaten
+        let mut complete_slide_data = Vec::with_capacity(self.slide_count as usize);
+
+        for slide_path in &slide_paths {
+            // Slide XML-Daten laden
+            let slide_xml = self.read_file_from_archive(slide_path)?;
+
+            // Beziehungsdatei für den Slide laden
+            let rels_path = self.get_slide_rels_path(slide_path);
+            let rels_data = self.read_file_from_archive(&rels_path).ok();
+
+            // Slide-Nummer extrahieren
+            let slide_number = Slide::extract_slide_number(slide_path).unwrap_or(0);
+
+            // Parse Slide-Elemente
+            let elements = crate::parse_xml::parse_slide_xml(&slide_xml)?;
+
+            // Bilder extrahieren
+            let mut images = Vec::new();
+            let mut image_data = HashMap::new();
+
+            if self.config.extract_images {
+                // Bilder aus Beziehungen extrahieren
+                if let Some(ref rels_bytes) = rels_data {
+                    images = crate::parse_rels::parse_slide_rels(rels_bytes)?;
+                }
+
+                // Alle Bilddaten vorab laden
+                for img_ref in &images {
+                    let img_path = PptxContainer::get_full_image_path(slide_path, &img_ref.target);
+                    if let Ok(data) = self.read_file_from_archive(&img_path) {
+                        image_data.insert(img_ref.id.clone(), data);
+                    }
+                }
+            }
+
+            // Alle vorbereiteten Daten in eine Struktur packen
+            complete_slide_data.push((
+                slide_path.clone(),
+                slide_number,
+                elements,
+                images,
+                image_data
+            ));
+        }
+
+        // Jetzt können wir parallel verarbeiten, ohne Zugriff auf self
+        let slides: Vec<Slide> = complete_slide_data.into_par_iter() // Beachte: into_par_iter, um Ownership zu übertragen
+            .map(|(slide_path, slide_number, elements, images, image_data)| {
+                // Slide erstellen (direkt, ohne Container-Zugriff)
+                let mut slide = Slide::new(
+                    slide_path,
+                    slide_number,
+                    elements,
+                    images,
+                    image_data,
+                    config.clone(), // Klonen der (vermutlich kleinen) Config
+                );
+
+                // Bilder verknüpfen
+                slide.link_images();
+                slide
+            })
+            .collect();
 
         Ok(slides)
     }
@@ -99,7 +186,7 @@ impl PptxContainer {
     ///     // println!("Loaded first slide: {}", slide.slide_number);
     /// // }
     /// ```
-    fn load_slide(&mut self, slide_path: &str) -> Result<Option<Slide>> {
+    pub fn load_slide(&mut self, slide_path: &str) -> Result<Option<Slide>> {
         // load xml data
         let slide_data = self.read_file_from_archive(slide_path)?;
 
@@ -158,7 +245,7 @@ impl PptxContainer {
     ///
     /// This is an internal method used to extract individual files from the
     /// PPTX archive (which is essentially a ZIP file).
-    fn read_file_from_archive(&mut self, path: &str) -> Result<Vec<u8>> {
+    pub fn read_file_from_archive(&mut self, path: &str) -> Result<Vec<u8>> {
         let mut file = self.archive.by_name(path)?;
         let mut content = Vec::new();
         file.read_to_end(&mut content)?;
@@ -180,7 +267,7 @@ impl PptxContainer {
     /// ```
     /// // For a slide path "ppt/slides/slide1.xml"
     /// // Returns "ppt/slides/_rels/slide1.xml.rels"
-    fn get_slide_rels_path(&self, slide_path: &str) -> String {
+    pub fn get_slide_rels_path(&self, slide_path: &str) -> String {
         let mut rels_path = slide_path.to_string();
         if let Some(pos) = rels_path.rfind('/') {
             rels_path.insert_str(pos + 1, "_rels/");
@@ -189,7 +276,7 @@ impl PptxContainer {
         rels_path
     }
 
-    fn get_full_image_path(slide_path: &str, target: &str) -> String {
+    pub fn get_full_image_path(slide_path: &str, target: &str) -> String {
         if target.starts_with("../") {
             let adjusted_target = target.trim_start_matches("../");
             format!("ppt/{}", adjusted_target)

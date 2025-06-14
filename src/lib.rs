@@ -2,8 +2,8 @@ mod container;
 mod slide;
 mod types;
 mod constants;
-mod parse_xml;
-mod parse_rels;
+pub mod parse_xml;
+pub mod parse_rels;
 mod parser_config;
 
 pub use container::PptxContainer;
@@ -39,6 +39,9 @@ pub enum Error {
 
     #[error("Conversion was not possible")]
     ConversionFailed,
+
+    #[error("Conversion was not possible")]
+    MultiThreadedConversionFailed,
 
     #[error("Unbekannter Fehler")]
     Unknown,
