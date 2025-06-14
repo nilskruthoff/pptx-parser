@@ -1,0 +1,7 @@
+﻿<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+    <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">
+        <a:chart>
+            <a:title>a chart, not a table</a:title>
+        </a:chart>
+    </a:graphicData>
+</a:graphic>
