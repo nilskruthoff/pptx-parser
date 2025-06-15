@@ -6,6 +6,7 @@ use std::{
     io::Read,
     path::Path,
 };
+use std::sync::Arc;
 
 /// Holds the internal representation of a loaded PowerPoint (pptx) container.
 ///
@@ -78,87 +79,82 @@ impl PptxContainer {
         Ok(slides)
     }
 
-    /// Parses all slides in the presentation with optimised multithreaded processing.
+    /// Parses all slides in the presentation with optimized multithreaded processing.
     ///
     /// This method uses Rayon for parallel processing by:
-    /// 1. preloading all necessary data
-    /// 2. performing CPU-intensive processing in parallel
-    /// 3. ensuring memory efficiency and thread safety
+    /// 1. Preloading all necessary data sequentially (I/O-bound operations)
+    /// 2. Performing CPU-intensive XML parsing in parallel
+    /// 3. Using shared references for thread-safe data access
     ///
     /// # Returns
     ///
     /// * `Result<Vec<Slide>>` - List of all parsed slides
     pub fn parse_all_multi_threaded(&mut self) -> Result<Vec<Slide>> {
-        // Zuerst extrahieren wir alle Daten, die wir brauchen, im Voraus
-        let slide_paths: Vec<String> = self.slide_paths.to_vec();
+        // Clone paths upfront to avoid holding reference to self
+        let slide_paths = self.slide_paths.clone();
         let config = self.config.clone();
-
-        // Vorausladen aller benötigten Daten, einschließlich Bilddaten
-        let mut complete_slide_data = Vec::with_capacity(self.slide_count as usize);
+        let mut raw_data = Vec::with_capacity(slide_paths.len());
+        let mut all_image_data = HashMap::new();
 
         for slide_path in &slide_paths {
-            // Slide XML-Daten laden
+            // Read slide XML and relationships
             let slide_xml = self.read_file_from_archive(slide_path)?;
-
-            // Beziehungsdatei für den Slide laden
             let rels_path = self.get_slide_rels_path(slide_path);
             let rels_data = self.read_file_from_archive(&rels_path).ok();
-
-            // Slide-Nummer extrahieren
             let slide_number = Slide::extract_slide_number(slide_path).unwrap_or(0);
 
-            // Parse Slide-Elemente
-            let elements = crate::parse_xml::parse_slide_xml(&slide_xml)?;
-
-            // Bilder extrahieren
-            let mut images = Vec::new();
-            let mut image_data = HashMap::new();
-
-            if self.config.extract_images {
-                // Bilder aus Beziehungen extrahieren
-                if let Some(ref rels_bytes) = rels_data {
-                    images = crate::parse_rels::parse_slide_rels(rels_bytes)?;
+            // Preload images if enabled
+            let mut slide_images = Vec::new();
+            if config.extract_images {
+                if let Some(ref data) = rels_data {
+                    slide_images = crate::parse_rels::parse_slide_rels(data)?;
                 }
 
-                // Alle Bilddaten vorab laden
-                for img_ref in &images {
-                    let img_path = PptxContainer::get_full_image_path(slide_path, &img_ref.target);
-                    if let Ok(data) = self.read_file_from_archive(&img_path) {
-                        image_data.insert(img_ref.id.clone(), data);
-                    }
+                for img_ref in &slide_images {
+                    let path = PptxContainer::get_full_image_path(slide_path, &img_ref.target);
+                    let data = self.read_file_from_archive(&path)?;
+                    all_image_data.entry(img_ref.target.clone()).or_insert(data);
                 }
             }
 
-            // Alle vorbereiteten Daten in eine Struktur packen
-            complete_slide_data.push((
-                slide_path.clone(),
-                slide_number,
-                elements,
-                images,
-                image_data
-            ));
+            raw_data.push((slide_path.clone(), slide_number, slide_xml, slide_images));
         }
 
-        // Jetzt können wir parallel verarbeiten, ohne Zugriff auf self
-        let slides: Vec<Slide> = complete_slide_data.into_par_iter() // Beachte: into_par_iter, um Ownership zu übertragen
-            .map(|(slide_path, slide_number, elements, images, image_data)| {
-                // Slide erstellen (direkt, ohne Container-Zugriff)
+        // Share image data atomically across threads
+        let shared_image_data = Arc::new(all_image_data);
+
+        // Parallel processing starts here (CPU-bound tasks)
+        let slides: Result<Vec<_>> = raw_data
+            .into_par_iter()
+            .map(|(path, number, xml, images)| {
+                // Parse XML in parallel (CPU-intensive)
+                let elements = crate::parse_xml::parse_slide_xml(&xml)?;
+
+                // Resolve image data from shared registry
+                let mut image_map = HashMap::new();
+                if config.extract_images {
+                    for img_ref in &images {
+                        if let Some(data) = shared_image_data.get(&img_ref.target) {
+                            image_map.insert(img_ref.id.clone(), data.clone());
+                        }
+                    }
+                }
+
+                // Build slide
                 let mut slide = Slide::new(
-                    slide_path,
-                    slide_number,
+                    path,
+                    number,
                     elements,
                     images,
-                    image_data,
-                    config.clone(), // Klonen der (vermutlich kleinen) Config
+                    image_map,
+                    config.clone(),
                 );
-
-                // Bilder verknüpfen
                 slide.link_images();
-                slide
+                Ok(slide)
             })
             .collect();
 
-        Ok(slides)
+        slides
     }
 
     
