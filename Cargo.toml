@@ -1,6 +1,6 @@
 [package]
 name = "pptx-to-md"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 description = "Parse Microsoft PowerPoint files (.pptx) into Markdown (.md)"
 readme = "README.md"
