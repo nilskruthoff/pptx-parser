@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .extract_images(true)
         .build();
     let pptx_container = PptxContainer::open(Path::new("presentation.pptx"), config)?;
-    let slides = container.parse_all()?;
+    let slides = container.parse_all()?; // or `parse_all_multi_threaded()?`
     
     for slide in slides {
         // Convert each slide into Markdown
