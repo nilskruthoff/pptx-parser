@@ -1,6 +1,7 @@
 ﻿# pptx-to-md
 
 [![Crates.io](https://img.shields.io/crates/v/pptx-to-md.svg)](https://crates.io/crates/pptx-to-md)
+[![tests](https://github.com/nilskruthoff/pptx-parser/actions/workflows/rust.yml/badge.svg)](https://github.com/nilskruthoff/pptx-parser/actions/workflows/rust.yml)
 [![Documentation](https://docs.rs/pptx-to-md/badge.svg)](https://docs.rs/pptx-to-md)
 ![License](https://img.shields.io/crates/l/pptx-to-md.svg)
 
@@ -28,10 +29,21 @@ use pptx_to_md::{PptxContainer, ParserConfig};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create config instance with the `ParserConfigBuilder` 
+    // this example is equivalent to the `ParseConfig::default()`
     let config = ParserConfig::builder()
         .extract_images(true)
+        .compress_images(true)
+        .quality(80)
+        .image_handling_mode(ImageHandlingMode::InMarkdown)
+        .image_output_path(None)
         .build();
-    let pptx_container = PptxContainer::open(Path::new("presentation.pptx"), config)?;
+    // alternatively use `let config = ParserConfig::default();`
+    
+    // open the container with the path to your .pptx file
+    let pptx_container = PptxContainer::open(Path::new("path/to/your/presentation.pptx"), config)?;
+    
+    // Parse all slides' xml at once single- or multithreaded
     let slides = container.parse_all()?; // or `parse_all_multi_threaded()?`
     
     for slide in slides {
@@ -45,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match element {
                 SlideElement::Text(text) => { println!("{:?}\n", text) }
                 SlideElement::Table(table) => { println!("{:?}\n", table) }
-                SlideElement::Image(image) => { println!("{:?}\n", image) }
+                SlideElement::Image(image_reference) => { println!("{:?}\n", image_reference) }
                 SlideElement::List(list) => { println!("{:?}\n", list) }
                 SlideElement::Unknown => { println!("An Unknown element was found.\n") }
             }
@@ -73,11 +85,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 <br/>
 
 #### Member of `ImageHandlingMode`
-| Member        | Description                                                                                           |
-|---------------|-------------------------------------------------------------------------------------------------------|
-| `InMarkdown`  | Images are embedded directly in the Markdown output using standard syntax as `base64` data (`![]()`)  |            
-| `Manually`    | Image handling is delegated to the user, requiring manual copying or referencing (as `base64`)        |
-| `Save`        | Images will be saved in a provided output directory and integrated using standard syntax (`![]()`)    |            
+| Member        | Description                                                                                                                     |
+|---------------|---------------------------------------------------------------------------------------------------------------------------------|
+| `InMarkdown`  | Images are embedded directly in the Markdown output using standard syntax as `base64` data (`![]()`)                            |            
+| `Manually`    | Image handling is delegated to the user, requiring manual copying or referencing (as `base64`)                                  |
+| `Save`        | Images will be saved in a provided output directory and integrated using `<a>` tag syntax (`<a href="file:///<abs_path>"></a>`) |            
 
 ---
 
@@ -117,7 +129,7 @@ Include the following line in your Cargo.toml dependencies section:
 
 ```toml
 [dependencies]
-pptx-to-md = "0.3.0" # replace with the current version
+pptx-to-md = "0.3.0"
 ```
 
 ---
