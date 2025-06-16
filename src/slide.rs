@@ -119,10 +119,10 @@ impl Slide {
                             counters.resize(level + 1, 0);
                         }
 
-                        if level > previous_level {
-                            counters[level] = 0;
-                        } else if level < previous_level {
-                            counters.truncate(level + 1);
+                        match level.cmp(&previous_level) {
+                            std::cmp::Ordering::Greater => counters[level] = 0,
+                            std::cmp::Ordering::Less => counters.truncate(level + 1),
+                            std::cmp::Ordering::Equal => {}
                         }
 
                         counters[level] += 1;
@@ -296,7 +296,7 @@ mod tests {
 
         let raw_image = load_image_data("example-image.jpg");
 
-        if let Some(compression_result) = slide.compress_image(&*raw_image) {
+        if let Some(compression_result) = slide.compress_image(&raw_image) {
             assert!(compression_result.len() < raw_image.len());
         } else {
             panic!("Compression failed");
@@ -308,7 +308,7 @@ mod tests {
         let slide = mock_slide();
         let raw_image = load_image_data("example-image.jpg");
 
-        if let Some(compression_result) = slide.compress_image(&*raw_image) {
+        if let Some(compression_result) = slide.compress_image(&raw_image) {
             let result = image::load_from_memory(&compression_result);
             assert!(result.is_ok());
         } else {
