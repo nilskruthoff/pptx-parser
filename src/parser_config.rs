@@ -1,15 +1,32 @@
-﻿/// Configuration options for the PPTX parser.
+﻿/// Determines how images are handled during content export.
+///
+/// # Members
+///
+/// | Member                | Description                                                                                           |
+/// |-----------------------|-------------------------------------------------------------------------------------------------------|            
+/// | `InMarkdown`          | Images are embedded directly in the Markdown output using standard syntax as `base64` data (`![]()`)  |            
+/// | `ManuallyMarkdown`    | Image handling is delegated to the user, requiring manual copying or referencing (as `base64`)        |            
+/// | `ManuallyRaw`         | Image handling is delegated to the user, requiring manual copying or referencing (as raw `binary`)    |            
+#[derive(Debug, Clone)]
+pub enum ImageHandlingMode {
+    InMarkdown,
+    ManuallyMarkdown,
+    ManuallyRaw,
+}
+
+/// Configuration options for the PPTX parser.
 ///
 /// Use [`ParserConfig::builder()`] to create a configuration instance.
 /// This allows you to customize only the desired fields while falling back to sensible defaults for the rest.
 ///
 /// # Configuration Options
 /// 
-/// | Parameter | Type | Default | Description |
-/// |-----------|------|---------|-------------|
-/// | `extract_images` | `bool` | `true` | Whether images are extracted from slides or not |
-/// | `compress_images` | `bool` | `true` | Whether images are compressed before encoding or not |
-/// | `image_quality` | `u8` | `80` | Compression level (0-100);<br/> higher values retain more detail but increase file size |
+/// | Parameter                 | Type                  | Default       | Description                                                                               |
+/// |---------------------------|-----------------------|---------------|-------------------------------------------------------------------------------------------|
+/// | `extract_images`          | `bool`                | `true`        | Whether images are extracted from slides or not                                           |
+/// | `compress_images`         | `bool`                | `true`        | Whether images are compressed before encoding or not                                      |
+/// | `image_quality`           | `u8`                  | `80`          | Compression level (0-100);<br/> higher values retain more detail but increase file size   |
+/// | `image_handling_mode`     | `ImageHandlingMode`   | `InMarkdown`  | Determines how images are handled during content export.                                  |
 ///
 /// # Example
 ///
@@ -25,6 +42,7 @@ pub struct ParserConfig {
     pub extract_images: bool,
     pub compress_images: bool,
     pub quality: u8,
+    pub image_handling_mode: ImageHandlingMode,
 }
 
 impl Default for ParserConfig {
@@ -33,6 +51,7 @@ impl Default for ParserConfig {
             extract_images: true,
             compress_images: true,
             quality: 80,
+            image_handling_mode: ImageHandlingMode::InMarkdown,
         }
     }
 }
@@ -51,6 +70,7 @@ pub struct ParserConfigBuilder {
     extract_images: Option<bool>,
     compress_images: Option<bool>,
     image_quality: Option<u8>,
+    image_handling_mode: Option<ImageHandlingMode>,
 }
 
 impl ParserConfigBuilder {
@@ -73,6 +93,12 @@ impl ParserConfigBuilder {
         self
     }
     
+    /// Specifies the mode for processing the image after its extracted
+    pub fn image_handling_mode(mut self, value: ImageHandlingMode) -> Self {
+        self.image_handling_mode = Some(value);
+        self
+    }
+    
 
     /// Builds the final [`ParserConfig`] instance, applying default values for any fields that were not set.
     pub fn build(self) -> ParserConfig {
@@ -80,6 +106,7 @@ impl ParserConfigBuilder {
             extract_images: self.extract_images.unwrap_or(true),
             compress_images: self.compress_images.unwrap_or(true),
             quality: self.image_quality.unwrap_or(80),
+            image_handling_mode: self.image_handling_mode.unwrap_or(ImageHandlingMode::InMarkdown),
         }
     }
 }
