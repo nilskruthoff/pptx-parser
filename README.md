@@ -91,8 +91,10 @@ pptx-to-md/
 ├── LICENSE-APACHE
 ├── examples/           # Simple examples to present the usage of this crate
 │   ├── basic_usage.rs
-│   ├── image_extractions.rs
+│   ├── manual_image_extraction.rs
 │   ├── memory_efficient_streaming.rs
+│   ├── performance_tests.rs
+│   ├── save_images.rs
 │   └── slide_elements.rs
 ├── src/
 │   ├── lib.rs            # Public API
@@ -115,7 +117,7 @@ Include the following line in your Cargo.toml dependencies section:
 
 ```toml
 [dependencies]
-pptx-to-md = "0.1.2" # replace with the current version
+pptx-to-md = "0.3.0" # replace with the current version
 ```
 
 ---
@@ -127,4 +129,3 @@ and [Apache 2.0-Licence](https://github.com/nilskruthoff/pptx-parser/blob/master
 Feel free to contribute or suggest improvements!
 
 ---
-
