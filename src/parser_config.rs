@@ -4,11 +4,11 @@
 ///
 /// # Members
 ///
-/// | Member                | Description                                                                                                           |
-/// |-----------------------|-----------------------------------------------------------------------------------------------------------------------|            
-/// | `InMarkdown`          | Images are embedded directly in the Markdown output using standard syntax as `base64` data (`![]()`)                  |            
-/// | `Manually`            | Image handling is delegated to the user, requiring manual copying or referencing (as `base64` encoded string)         |            
-/// | `Save`                | Images will be saved in a provided output directory and integrated using standard syntax (`![]()`)                    |            
+/// | Member                | Description                                                                                                                       |
+/// |-----------------------|-----------------------------------------------------------------------------------------------------------------------------------|            
+/// | `InMarkdown`          | Images are embedded directly in the Markdown output using standard syntax as `base64` data (`![]()`)                              |            
+/// | `Manually`            | Image handling is delegated to the user, requiring manual copying or referencing (as `base64` encoded string)                     |            
+/// | `Save`                | Images will be saved in a provided output directory and integrated using `<a>` tag syntax (`<a href="file:///<abs_path>"></a>`)   |            
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImageHandlingMode {
     InMarkdown,
