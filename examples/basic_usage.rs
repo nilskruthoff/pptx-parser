@@ -4,7 +4,7 @@
 //!
 //! Run with: cargo run --example basic_usage <path/to/your/presentation.pptx>
 
-use pptx_to_md::{PptxContainer, Result, ParserConfig};
+use pptx_to_md::{PptxContainer, Result, ParserConfig, ImageHandlingMode};
 use std::env;
 use std::fs::File;
 use std::io::Write;
@@ -25,6 +25,9 @@ fn main() -> Result<()> {
     // Use the config builder to build your config
     let config = ParserConfig::builder()
         .extract_images(true)
+        .compress_images(true)
+        .quality(75)
+        .image_handling_mode(ImageHandlingMode::InMarkdown)
         .build();
     
     // Open the PPTX file

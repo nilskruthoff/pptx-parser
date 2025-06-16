@@ -7,7 +7,7 @@ pub mod parse_rels;
 mod parser_config;
 
 pub use container::PptxContainer;
-pub use parser_config::ParserConfig;
+pub use parser_config::{ParserConfig, ImageHandlingMode};
 pub use slide::Slide;
 pub use types::*;
 

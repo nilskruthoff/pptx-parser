@@ -62,12 +62,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Config Parameters
 
-| Parameter | Type   | Default | Description                                                                                                                                                |
-|-----------|--------|-------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `extract_images` | `bool` | `true` | Whether images are extracted from slides or not                                                                                                            |
-| `compress_images` | `bool` | `true` | Whether images are compressed before encoding or not                                                                                                       |
-| `image_quality` | `u8`   | `80`  | Defines the image compression quality `(0-100)`. Higher values mean better quality but larger file sizes.                                                  |
+| Parameter                | Type                  | Default       | Description                                                                                               |
+|--------------------------|-----------------------|---------------|-----------------------------------------------------------------------------------------------------------|
+| `extract_images`         | `bool`                | `true`        | Whether images are extracted from slides or not. If false, images can not be extracted manually either.   |
+| `compress_images`        | `bool`                | `true`        | Whether images are compressed before encoding or not. Effects manually extracted images too.              |
+| `image_quality`          | `u8`                  | `80`          | Defines the image compression quality `(0-100)`. Higher values mean better quality but larger file sizes. |
+| `image_handling_mode`    | `ImageHandlingMode`   | `InMarkdown`  | Determines how images are handled during content export                                                   |      
+<br/>
 
+#### Member of `ImageHandlingMode`
+| Member          | Description                                                                                           |
+|-----------------|-------------------------------------------------------------------------------------------------------|
+| `InMarkdown`    | Images are embedded directly in the Markdown output using standard syntax as `base64` data (`![]()`)  |            
+| `Manually`      | Image handling is delegated to the user, requiring manual copying or referencing (as `base64`)        |            
 ---
 
 ## 🏗 Project Structure
