@@ -4,6 +4,23 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::Path;
 use image::ImageOutputFormat;
+use crate::parser_config::ImageHandlingMode;
+
+/// Encapsulates images for manual extraction of images from slides
+#[derive(Debug)]
+pub struct ManualImage {
+    pub base64_content: String,
+    pub img_ref: ImageReference,
+}
+
+impl ManualImage {
+    pub fn new(base64_content: String, img_ref: ImageReference) -> ManualImage {
+        Self {
+            base64_content,
+            img_ref,
+        }
+    }
+}
 
 /// Represents a single slide extracted from a PowerPoint (pptx) file.
 ///
@@ -91,10 +108,12 @@ impl Slide {
                     slide_txt.push('\n');
                 },
                 SlideElement::Image(image_ref) => {
+                    if self.config.image_handling_mode != ImageHandlingMode::InMarkdown { slide_txt.push('\n'); continue; }
+                    
                     if let Some(image_data) = self.image_data.get(&image_ref.id) {
                         let image_data = self.config.compress_images
                             .then(|| self.compress_image(image_data))
-                            .unwrap_or(Option::from(image_data.clone()));
+                            .unwrap_or_else(|| Option::from(image_data.clone()));
 
                         let base64_string = general_purpose::STANDARD.encode(image_data?);
                         let image_name = &image_ref.target.split('/').last()?;
@@ -225,6 +244,36 @@ impl Slide {
         } else {
             None
         }
+    }
+    
+    pub fn load_images_manually(&self) -> Option<Vec<ManualImage>> {
+        let mut images: Vec<ManualImage> = Vec::new();
+        
+        let image_refs: Vec<&ImageReference> = self.elements
+            .iter()
+            .filter_map(|element| match element {
+                SlideElement::Image(ref img) => Some(img),
+                _ => None,
+            })
+            .collect();
+        
+        for image_ref in image_refs {
+            if let Some(image_data) = self.image_data.get(&image_ref.id) {
+                let image_data = self.config.compress_images
+                    .then( | | self.compress_image(image_data))
+                    .unwrap_or_else(|| Option::from(image_data.clone()));
+
+                let base64_str = general_purpose::STANDARD.encode(image_data?);
+                
+                let image = ManualImage::new(
+                    base64_str,
+                    image_ref.clone(),
+                );
+                images.push(image);
+            }
+        }
+        
+        Some(images)
     }
 }
 

@@ -2,16 +2,14 @@
 ///
 /// # Members
 ///
-/// | Member                | Description                                                                                           |
-/// |-----------------------|-------------------------------------------------------------------------------------------------------|            
-/// | `InMarkdown`          | Images are embedded directly in the Markdown output using standard syntax as `base64` data (`![]()`)  |            
-/// | `ManuallyMarkdown`    | Image handling is delegated to the user, requiring manual copying or referencing (as `base64`)        |            
-/// | `ManuallyRaw`         | Image handling is delegated to the user, requiring manual copying or referencing (as raw `binary`)    |            
-#[derive(Debug, Clone)]
+/// | Member                | Description                                                                                                           |
+/// |-----------------------|-----------------------------------------------------------------------------------------------------------------------|            
+/// | `InMarkdown`          | Images are embedded directly in the Markdown output using standard syntax as `base64` data (`![]()`)                  |            
+/// | `Manually`            | Image handling is delegated to the user, requiring manual copying or referencing (as `base64` encoded string)         |            
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImageHandlingMode {
     InMarkdown,
-    ManuallyMarkdown,
-    ManuallyRaw,
+    Manually
 }
 
 /// Configuration options for the PPTX parser.
@@ -21,12 +19,12 @@ pub enum ImageHandlingMode {
 ///
 /// # Configuration Options
 /// 
-/// | Parameter                 | Type                  | Default       | Description                                                                               |
-/// |---------------------------|-----------------------|---------------|-------------------------------------------------------------------------------------------|
-/// | `extract_images`          | `bool`                | `true`        | Whether images are extracted from slides or not                                           |
-/// | `compress_images`         | `bool`                | `true`        | Whether images are compressed before encoding or not                                      |
-/// | `image_quality`           | `u8`                  | `80`          | Compression level (0-100);<br/> higher values retain more detail but increase file size   |
-/// | `image_handling_mode`     | `ImageHandlingMode`   | `InMarkdown`  | Determines how images are handled during content export.                                  |
+/// | Parameter                 | Type                  | Default       | Description                                                                                               |
+/// |---------------------------|-----------------------|---------------|-----------------------------------------------------------------------------------------------------------|
+/// | `extract_images`          | `bool`                | `true`        | Whether images are extracted from slides or not. If false, images can not be extracted manually either.   |
+/// | `compress_images`         | `bool`                | `true`        | Whether images are compressed before encoding or not. Effects manually extracted images too.              |
+/// | `image_quality`           | `u8`                  | `80`          | Compression level (0-100);<br/> higher values retain more detail but increase file size                   |
+/// | `image_handling_mode`     | `ImageHandlingMode`   | `InMarkdown`  | Determines how images are handled during content export.                                                  |
 ///
 /// # Example
 ///

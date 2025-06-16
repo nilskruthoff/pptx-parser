@@ -66,13 +66,10 @@ fn main() -> Result<()> {
                                 ext
                             );
 
-                            match image_data {
-                                Some(image_data) => {
-                                    fs::write(&output_path, image_data)?;
-                                    println!("Saved image to {}", output_path);
-                                    image_count += 1;
-                                },
-                                None => {}
+                            if let Some(image_data) = image_data {
+                                fs::write(&output_path, image_data)?;
+                                println!("Saved image to {}", output_path);
+                                image_count += 1;
                             }
                         }
                     }

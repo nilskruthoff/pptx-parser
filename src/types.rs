@@ -17,7 +17,7 @@ pub enum SlideElement {
     Unknown,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ImageReference {
     pub id: String,
     pub target: String,
