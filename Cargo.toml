@@ -18,8 +18,12 @@ name = "memory_efficient_streaming"
 path = "examples/memory_efficient_streaming.rs"
 
 [[example]]
-name = "image_extraction"
-path = "examples/image_extraction.rs"
+name = "manual_image_extraction"
+path = "examples/manual_image_extraction.rs"
+
+[[example]]
+name = "save_images"
+path = "examples/save_images.rs"
 
 [[example]]
 name = "slide_elements"

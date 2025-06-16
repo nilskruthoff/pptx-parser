@@ -12,12 +12,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reworked the extraction of images by adding `ImageHandlingMode` to the `ParserConfig`. With this, users can decide to manually extract images and handle the logic [(#19)](https://github.com/nilskruthoff/pptx-parser/issues/19)
 - New [example](https://github.com/nilskruthoff/pptx-parser/tree/master/examples) `manual_image_extraction.rs` to show how to handle images manually
 - `ManualImage` struct to encapsulate data and meta data of images
+- `ImageHandlingMode::Save` to save images in a given output path and adding context to the Markdown file [(#20)](https://github.com/nilskruthoff/pptx-parser/issues/20)
 
 ### Removed
 
 - `image_extraction` from [examples](https://github.com/nilskruthoff/pptx-parser/tree/master/examples) directory (replaced by `manual_image_extraction.rs`)
 
 ### Changed
+
+- Updated [README.md](https://github.com/nilskruthoff/pptx-parser/blob/master/README.md) to document new `ParserConfig` parameters
 
 ---
 
@@ -39,4 +42,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- [README.md](https://github.com/nilskruthoff/pptx-parser/blob/master/README.md) updated to show the latest working examples and features
+- Updated [README.md](https://github.com/nilskruthoff/pptx-parser/blob/master/README.md) to show the latest working examples and features

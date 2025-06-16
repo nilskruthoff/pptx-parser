@@ -62,19 +62,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Config Parameters
 
-| Parameter                | Type                  | Default       | Description                                                                                               |
-|--------------------------|-----------------------|---------------|-----------------------------------------------------------------------------------------------------------|
-| `extract_images`         | `bool`                | `true`        | Whether images are extracted from slides or not. If false, images can not be extracted manually either.   |
-| `compress_images`        | `bool`                | `true`        | Whether images are compressed before encoding or not. Effects manually extracted images too.              |
-| `image_quality`          | `u8`                  | `80`          | Defines the image compression quality `(0-100)`. Higher values mean better quality but larger file sizes. |
-| `image_handling_mode`    | `ImageHandlingMode`   | `InMarkdown`  | Determines how images are handled during content export                                                   |      
+| Parameter              | Type                  | Default       | Description                                                                                               |
+|------------------------|-----------------------|---------------|-----------------------------------------------------------------------------------------------------------|
+| `extract_images`       | `bool`                | `true`        | Whether images are extracted from slides or not. If false, images can not be extracted manually either.   |
+| `compress_images`      | `bool`                | `true`        | Whether images are compressed before encoding or not. Effects manually extracted images too.              |
+| `image_quality`        | `u8`                  | `80`          | Defines the image compression quality `(0-100)`. Higher values mean better quality but larger file sizes. |
+| `image_handling_mode`  | `ImageHandlingMode`   | `InMarkdown`  | Determines how images are handled during content export                                                   |
+| `image_output_path`    | `Option<PathBuf>`     | `None`        | Output directory path for `ImageHandlingMode::Save` (mandatory for saving mode)                           |
+
 <br/>
 
 #### Member of `ImageHandlingMode`
-| Member          | Description                                                                                           |
-|-----------------|-------------------------------------------------------------------------------------------------------|
-| `InMarkdown`    | Images are embedded directly in the Markdown output using standard syntax as `base64` data (`![]()`)  |            
-| `Manually`      | Image handling is delegated to the user, requiring manual copying or referencing (as `base64`)        |            
+| Member        | Description                                                                                           |
+|---------------|-------------------------------------------------------------------------------------------------------|
+| `InMarkdown`  | Images are embedded directly in the Markdown output using standard syntax as `base64` data (`![]()`)  |            
+| `Manually`    | Image handling is delegated to the user, requiring manual copying or referencing (as `base64`)        |
+| `Save`        | Images will be saved in a provided output directory and integrated using standard syntax (`![]()`)    |            
+
 ---
 
 ## 🏗 Project Structure
@@ -87,8 +91,10 @@ pptx-to-md/
 ├── LICENSE-APACHE
 ├── examples/           # Simple examples to present the usage of this crate
 │   ├── basic_usage.rs
-│   ├── image_extractions.rs
+│   ├── manual_image_extraction.rs
 │   ├── memory_efficient_streaming.rs
+│   ├── performance_tests.rs
+│   ├── save_images.rs
 │   └── slide_elements.rs
 ├── src/
 │   ├── lib.rs            # Public API
@@ -111,7 +117,7 @@ Include the following line in your Cargo.toml dependencies section:
 
 ```toml
 [dependencies]
-pptx-to-md = "0.1.2" # replace with the current version
+pptx-to-md = "0.3.0" # replace with the current version
 ```
 
 ---
@@ -123,4 +129,3 @@ and [Apache 2.0-Licence](https://github.com/nilskruthoff/pptx-parser/blob/master
 Feel free to contribute or suggest improvements!
 
 ---
-

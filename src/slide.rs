@@ -1,10 +1,11 @@
-﻿use crate::{ImageReference, ParserConfig, SlideElement};
+﻿use crate::parser_config::ImageHandlingMode;
+use crate::{ImageReference, ParserConfig, SlideElement};
 use base64::{engine::general_purpose, Engine as _};
-use std::collections::HashMap;
-use std::io::Cursor;
-use std::path::Path;
 use image::ImageOutputFormat;
-use crate::parser_config::ImageHandlingMode;
+use std::collections::HashMap;
+use std::fs;
+use std::io::Cursor;
+use std::path::{Path, PathBuf};
 
 /// Encapsulates images for manual extraction of images from slides
 #[derive(Debug)]
@@ -73,7 +74,8 @@ impl Slide {
     pub fn convert_to_md(&self) -> Option<String> {
         let mut slide_txt = String::new();
         slide_txt.push_str(format!("<!-- Slide {} -->\n\n", self.slide_number).as_str());
-
+        let mut image_count = 0;
+        
         for element in &self.elements {
             match element {
                 SlideElement::Text(text) => {
@@ -108,18 +110,51 @@ impl Slide {
                     slide_txt.push('\n');
                 },
                 SlideElement::Image(image_ref) => {
-                    if self.config.image_handling_mode != ImageHandlingMode::InMarkdown { slide_txt.push('\n'); continue; }
-                    
-                    if let Some(image_data) = self.image_data.get(&image_ref.id) {
-                        let image_data = self.config.compress_images
-                            .then(|| self.compress_image(image_data))
-                            .unwrap_or_else(|| Option::from(image_data.clone()));
+                    match self.config.image_handling_mode {
+                        ImageHandlingMode::InMarkdown => {
+                            if let Some(image_data) = self.image_data.get(&image_ref.id) {
+                                let image_data = self.config.compress_images
+                                    .then(|| self.compress_image(image_data))
+                                    .unwrap_or_else(|| Option::from(image_data.clone()));
 
-                        let base64_string = general_purpose::STANDARD.encode(image_data?);
-                        let image_name = &image_ref.target.split('/').last()?;
-                        let file_ext = &image_name.split('.').last()?;
+                                let base64_string = general_purpose::STANDARD.encode(image_data?);
+                                let image_name = &image_ref.target.split('/').last()?;
+                                let file_ext = &image_name.split('.').last()?;
 
-                        slide_txt.push_str(format!("![{}](data:image/{};base64,{})", image_name, file_ext, base64_string).as_str());
+                                slide_txt.push_str(format!("![{}](data:image/{};base64,{})", image_name, file_ext, base64_string).as_str());
+                            }
+                        }
+                        ImageHandlingMode::Save => {
+                            if let Some(image_data) = self.image_data.get(&image_ref.id) {
+                                let image_data = self.config.compress_images
+                                    .then(|| self.compress_image(image_data))
+                                    .unwrap_or_else(|| Option::from(image_data.clone()));
+
+                                let ext = self.config.compress_images
+                                    .then(|| "jpg".to_string())
+                                    .unwrap_or_else(|| self.get_image_extension(&image_ref.target.clone()));
+
+                                let output_dir = self.config
+                                    .image_output_path
+                                    .clone()
+                                    .unwrap_or_else(|| PathBuf::from("."));
+
+                                let _ = fs::create_dir_all(&output_dir);
+
+                                let mut image_path = output_dir.clone();
+                                let file_name = format!("slide{}_image{}_{}.{}", self.slide_number, image_count + 1, &image_ref.id, ext);
+                                image_path.push(&file_name);
+
+                                let _ = fs::write(&image_path, image_data?);
+
+                                let abs_file_url = self.path_to_file_url(&image_path);
+                                let html_link = format!(r#"<a href={:?}>{file_name}</a>"#, abs_file_url?);
+                                image_count += 1;
+                                slide_txt.push_str(&html_link);
+                                slide_txt.push('\n');
+                            }
+                        }
+                        ImageHandlingMode::Manually => { slide_txt.push('\n'); continue; }
                     }
                     slide_txt.push('\n');
                 }
@@ -275,15 +310,30 @@ impl Slide {
         
         Some(images)
     }
+
+    fn path_to_file_url(&self, path: &Path) -> Option<String> {
+        let abs_path = path.canonicalize().ok()?;
+        let mut path_str = abs_path.to_string_lossy().replace('\\', "/");
+
+        // remove windows unc prefix
+        if cfg!(windows) {
+            if let Some(stripped) = path_str.strip_prefix("//?/") {
+                path_str = stripped.to_string();
+            }
+            Some(format!("file:///{}", path_str))
+        } else {
+            Some(format!("file://{}", path_str))
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::PathBuf;
-    
+
     use super::*;
-    
+
     fn mock_slide() -> Slide {
         Slide {
             rel_path: "ppt/slides/slide1.xml".to_string(),
