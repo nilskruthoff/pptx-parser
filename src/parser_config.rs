@@ -30,6 +30,7 @@ pub enum ImageHandlingMode {
 /// | `image_quality`           | `u8`                  | `80`          | Compression level (0-100);<br/> higher values retain more detail but increase file size                   |
 /// | `image_handling_mode`     | `ImageHandlingMode`   | `InMarkdown`  | Determines how images are handled during content export                                                   |
 /// | `image_output_path`       | `Option<PathBuf>`     | `None`        | Output directory path for `ImageHandlingMode::Save` (mandatory for the saving mode)                       |
+/// | `include_slide_comment`   | `bool`                | `true`        | Weather the slide number comment is included or not (`<!-- Slide [n] -->`)                                |
 ///
 /// # Example
 ///
@@ -52,6 +53,7 @@ pub struct ParserConfig {
     pub quality: u8,
     pub image_handling_mode: ImageHandlingMode,
     pub image_output_path: Option<PathBuf>,
+    pub include_slide_comment: bool,
 }
 
 impl Default for ParserConfig {
@@ -62,6 +64,7 @@ impl Default for ParserConfig {
             quality: 80,
             image_handling_mode: ImageHandlingMode::InMarkdown,
             image_output_path: None,
+            include_slide_comment: true,
         }
     }
 }
@@ -82,6 +85,7 @@ pub struct ParserConfigBuilder {
     image_quality: Option<u8>,
     image_handling_mode: Option<ImageHandlingMode>,
     image_output_path: Option<PathBuf>,
+    include_slide_comment: Option<bool>,
 }
 
 impl ParserConfigBuilder {
@@ -119,6 +123,12 @@ impl ParserConfigBuilder {
         self
     }
 
+    /// Sets weather comments with current slide number are included or not
+    pub fn include_slide_comment(mut self, value: bool) -> Self {
+        self.include_slide_comment = Some(value);
+        self
+    }
+    
     /// Builds the final [`ParserConfig`] instance, applying default values for any fields that were not set.
     pub fn build(self) -> ParserConfig {
         ParserConfig {
@@ -127,6 +137,7 @@ impl ParserConfigBuilder {
             quality: self.image_quality.unwrap_or(80),
             image_handling_mode: self.image_handling_mode.unwrap_or(ImageHandlingMode::InMarkdown),
             image_output_path: self.image_output_path,
+            include_slide_comment: self.include_slide_comment.unwrap_or(true),
         }
     }
 }
