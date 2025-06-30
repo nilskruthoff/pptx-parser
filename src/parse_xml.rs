@@ -49,27 +49,44 @@ pub fn parse_slide_xml(xml_data: &[u8]) -> Result<Vec<SlideElement>> {
 
     let mut elements = Vec::new();
     for child_node in sp_tree.children().filter(|n| n.is_element()) {
-        let tag_name = child_node.tag_name().name();
-        let namespace = child_node.tag_name().namespace().unwrap_or("");
-        if namespace == P_NAMESPACE {
-            match tag_name {
-                "sp" => {
-                    let slide = parse_sp(&child_node)?;
-                    elements.push(slide);
-                },
-                "graphicFrame" => {
-                    if let Some(element) = parse_graphic_frame(&child_node)? {
-                        elements.push(element);
-                    }
-                },
-                "pic" => {
-                    let image_element = parse_pic(&child_node)?;
-                    elements.push(image_element);
-                },
-                _ => {
-                    elements.push(Unknown)
-                }
+        elements.extend(parse_group(&child_node)?);
+    }
+
+    Ok(elements)
+}
+
+/// Parst eine gesamte Gruppe und alle untergeordneten Kind-Elemente rekursiv
+fn parse_group(node: &Node) -> Result<Vec<SlideElement>> {
+    let mut elements = Vec::new();
+
+    let tag_name = node.tag_name().name();
+    let namespace = node.tag_name().namespace().unwrap_or("");
+
+    if namespace != P_NAMESPACE {
+        return Ok(elements);
+    }
+
+    match tag_name {
+        "sp" => {
+            let slide_element = parse_sp(node)?;
+            elements.push(slide_element);
+        },
+        "graphicFrame" => {
+            if let Some(graphic_element) = parse_graphic_frame(node)? {
+                elements.push(graphic_element);
             }
+        },
+        "pic" => {
+            let image_element = parse_pic(node)?;
+            elements.push(image_element);
+        },
+        "grpSp" => {
+            for child in node.children().filter(|n| n.is_element()) {
+                elements.extend(parse_group(&child)?);
+            }
+        },
+        _ => {
+            elements.push(SlideElement::Unknown)
         }
     }
 
