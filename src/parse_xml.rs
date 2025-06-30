@@ -440,7 +440,6 @@ mod tests {
                 assert_eq!(normalize_test_string(&text_element.runs[2].text), normalize_test_string("!"));
             },
             Err(_) => panic!("Fehler beim Parsen der XML-Datei"),
-            _ => {}
         }
     }
 
@@ -646,7 +645,6 @@ mod tests {
                 assert!(list.items[2].is_ordered, "Third item should be ordered (has buChar)");
                 assert_eq!(normalize_test_string(&list.items[2].runs[0].text), normalize_test_string("Third item\n"), "Third item text mismatch");
             },
-            Ok(_) => panic!("Expected a List element but got something else"),
             Err(_) => panic!("Failed to parse simple list")
         }
     }
@@ -682,7 +680,6 @@ mod tests {
                 assert!(list.items[4].is_ordered, "Fifth item should be ordered");
                 assert_eq!(normalize_test_string(&list.items[4].runs[0].text), normalize_test_string("Second main topic\n"), "Fifth item text mismatch");
             },
-            Ok(_) => panic!("Expected a List element but got something else"),
             Err(_) => panic!("Failed to parse multilevel list")
         }
     }
@@ -903,7 +900,6 @@ mod tests {
                 assert_eq!(normalize_test_string(&table.rows[0].cells[0].runs[0].text), normalize_test_string("Cell 1,1"), "Cell content mismatch");
             },
             Ok(None) => panic!("Should have found a table, but got None"),
-            Ok(_) => panic!("Found a different slide element, expected a table"),
             Err(_) => panic!("Failed to parse graphic frame with table")
         }
     }
@@ -936,7 +932,6 @@ mod tests {
                 assert_eq!(image_ref.id, "rId2", "Image reference ID should be 'rId2'");
                 assert_eq!(image_ref.target, "", "Image target should be empty initially");
             },
-            Ok(_) => panic!("Expected an Image element but got something else"),
             Err(e) => panic!("Failed to parse picture: {:?}", e)
         }
     }
