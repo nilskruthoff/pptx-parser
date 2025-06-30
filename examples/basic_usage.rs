@@ -28,6 +28,7 @@ fn main() -> Result<()> {
         .compress_images(true)
         .quality(75)
         .image_handling_mode(ImageHandlingMode::InMarkdown)
+        .include_slide_comment(true)
         .build();
     
     // Open the PPTX file

@@ -73,7 +73,7 @@ impl Slide {
     /// - `None`: If a conversion error occurs during image encoding.
     pub fn convert_to_md(&self) -> Option<String> {
         let mut slide_txt = String::new();
-        slide_txt.push_str(format!("<!-- Slide {} -->\n\n", self.slide_number).as_str());
+        if self.config.include_slide_comment { slide_txt.push_str(format!("<!-- Slide {} -->\n\n", self.slide_number).as_str()); }
         let mut image_count = 0;
         
         for element in &self.elements {

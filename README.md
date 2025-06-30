@@ -37,6 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .quality(80)
         .image_handling_mode(ImageHandlingMode::InMarkdown)
         .image_output_path(None)
+        .include_slide_comment(true)
         .build();
     // alternatively use `let config = ParserConfig::default();`
     
@@ -74,14 +75,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Config Parameters
 
-| Parameter              | Type                  | Default       | Description                                                                                               |
-|------------------------|-----------------------|---------------|-----------------------------------------------------------------------------------------------------------|
-| `extract_images`       | `bool`                | `true`        | Whether images are extracted from slides or not. If false, images can not be extracted manually either.   |
-| `compress_images`      | `bool`                | `true`        | Whether images are compressed before encoding or not. Effects manually extracted images too.              |
-| `image_quality`        | `u8`                  | `80`          | Defines the image compression quality `(0-100)`. Higher values mean better quality but larger file sizes. |
-| `image_handling_mode`  | `ImageHandlingMode`   | `InMarkdown`  | Determines how images are handled during content export                                                   |
-| `image_output_path`    | `Option<PathBuf>`     | `None`        | Output directory path for `ImageHandlingMode::Save` (mandatory for saving mode)                           |
-
+| Parameter                | Type                  | Default       | Description                                                                                               |
+|--------------------------|-----------------------|---------------|-----------------------------------------------------------------------------------------------------------|
+| `extract_images`         | `bool`                | `true`        | Whether images are extracted from slides or not. If false, images can not be extracted manually either.   |
+| `compress_images`        | `bool`                | `true`        | Whether images are compressed before encoding or not. Effects manually extracted images too.              |
+| `image_quality`          | `u8`                  | `80`          | Defines the image compression quality `(0-100)`. Higher values mean better quality but larger file sizes. |
+| `image_handling_mode`    | `ImageHandlingMode`   | `InMarkdown`  | Determines how images are handled during content export                                                   |
+| `image_output_path`      | `Option<PathBuf>`     | `None`        | Output directory path for `ImageHandlingMode::Save` (mandatory for saving mode)                           |
+| `include_slide_comment`  | `bool`                | `true`        | Weather the slide number comment is included or not (`<!-- Slide [n] -->`)                                | 
 <br/>
 
 #### Member of `ImageHandlingMode`
