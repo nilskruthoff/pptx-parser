@@ -1,5 +1,5 @@
 ﻿use crate::parser_config::ImageHandlingMode;
-use crate::{ImageReference, ParserConfig, SlideElement};
+use crate::{ElementPosition, ImageReference, ParserConfig, SlideElement};
 use base64::{engine::general_purpose, Engine as _};
 use image::ImageOutputFormat;
 use std::collections::HashMap;
@@ -75,16 +75,22 @@ impl Slide {
         let mut slide_txt = String::new();
         if self.config.include_slide_comment { slide_txt.push_str(format!("<!-- Slide {} -->\n\n", self.slide_number).as_str()); }
         let mut image_count = 0;
+
+        let mut sorted_elements = self.elements.clone();
+        sorted_elements.sort_by_key(|element| {
+            let ElementPosition { y, x } = element.position();
+            (y, x)
+        });
         
-        for element in &self.elements {
+        for element in sorted_elements {
             match element {
-                SlideElement::Text(text) => {
+                SlideElement::Text(text, _pos) => {
                     for run in &text.runs {
                         slide_txt.push_str(&run.render_as_md());
                     }
                     slide_txt.push('\n');
                 },
-                SlideElement::Table(table) => {
+                SlideElement::Table(table, _pos) => {
                     let mut is_header = true;
                     for row in &table.rows {
                         let mut row_texts = Vec::new();
@@ -109,7 +115,7 @@ impl Slide {
                     }
                     slide_txt.push('\n');
                 },
-                SlideElement::Image(image_ref) => {
+                SlideElement::Image(image_ref, _pos) => {
                     match self.config.image_handling_mode {
                         ImageHandlingMode::InMarkdown => {
                             if let Some(image_data) = self.image_data.get(&image_ref.id) {
@@ -158,7 +164,7 @@ impl Slide {
                     }
                     slide_txt.push('\n');
                 }
-                SlideElement::List(list_element) => {
+                SlideElement::List(list_element, _pos) => {
                     let mut counters: Vec<usize> = Vec::new();
                     let mut previous_level = 0;
 
@@ -235,7 +241,7 @@ impl Slide {
             .collect();
 
         for element in &mut self.elements {
-            if let SlideElement::Image(ref mut img_ref) = element {
+            if let SlideElement::Image(ref mut img_ref, _pos) = element {
                 if let Some(target) = id_to_target.get(&img_ref.id) {
                     img_ref.target = target.clone();
                 }
@@ -287,7 +293,7 @@ impl Slide {
         let image_refs: Vec<&ImageReference> = self.elements
             .iter()
             .filter_map(|element| match element {
-                SlideElement::Image(ref img) => Some(img),
+                SlideElement::Image(ref img, _pos) => Some(img),
                 _ => None,
             })
             .collect();
@@ -331,7 +337,7 @@ impl Slide {
 mod tests {
     use std::fs;
     use std::path::PathBuf;
-
+    use crate::ElementPosition;
     use super::*;
 
     fn mock_slide() -> Slide {
@@ -377,13 +383,14 @@ mod tests {
     #[test]
     fn test_link_images() {
         let mut slide = mock_slide();
-
+        let _position = ElementPosition::default();
+        
         slide.images.push(ImageReference { id: "rId2".to_string(), target: "../media/image1.png".to_string() });
-        slide.elements.push(SlideElement::Image(ImageReference { id: "rId2".to_string(), target: "".to_string() }));
+        slide.elements.push(SlideElement::Image(ImageReference { id: "rId2".to_string(), target: "".to_string() }, _position));
 
         slide.link_images();
 
-        if let SlideElement::Image(img_ref) = &slide.elements[0] {
+        if let SlideElement::Image(img_ref, _postion) = &slide.elements[0] {
             assert_eq!(img_ref.target, "../media/image1.png");
         }
     }
