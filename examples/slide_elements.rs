@@ -38,10 +38,10 @@ fn main() -> Result<()> {
                 // iterate over each slide element and match them to add custom logic
                 for element in &slide.elements {
                     match element {
-                        SlideElement::Text(text) => { println!("{:?}\n", text) }
-                        SlideElement::Table(table) => { println!("{:?}\n", table) }
-                        SlideElement::Image(image) => { println!("{:?}\n", image) }
-                        SlideElement::List(list) => { println!("{:?}\n", list) }
+                        SlideElement::Text(text, pos) => { println!("{:?}\t{:?}\n", text, pos) }
+                        SlideElement::Table(table, pos) => { println!("{:?}\t{:?}\n", table, pos) }
+                        SlideElement::Image(image, pos) => { println!("{:?}\t{:?}\n", image, pos) }
+                        SlideElement::List(list, pos) => { println!("{:?}\t{:?}\n", list, pos) }
                         SlideElement::Unknown => { println!("An Unknown element was found.\n") }
                     }
                 }
