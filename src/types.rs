@@ -8,13 +8,25 @@ pub struct Slide {
     pub elements: Vec<SlideElement>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SlideElement {
-    Text(TextElement),
-    Table(TableElement),
-    Image(ImageReference),
-    List(ListElement),
+    Text(TextElement, ElementPosition),
+    Table(TableElement, ElementPosition),
+    Image(ImageReference, ElementPosition),
+    List(ListElement, ElementPosition),
     Unknown,
+}
+
+impl SlideElement {
+    pub fn position(&self) -> ElementPosition {
+        match self {
+            SlideElement::Text(_, pos)
+            | SlideElement::Image(_, pos)
+            | SlideElement::List(_, pos)
+            | SlideElement::Table(_, pos) => *pos,
+            SlideElement::Unknown => ElementPosition::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -23,12 +35,12 @@ pub struct ImageReference {
     pub target: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TextElement {
     pub runs: Vec<Run>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Formatting {
     pub bold: bool,
     pub italic: bool,
@@ -36,7 +48,7 @@ pub struct Formatting {
     pub lang: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Run {
     pub text: String,
     pub formatting: Formatting,
@@ -79,29 +91,35 @@ impl Run {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TableElement {
     pub rows: Vec<TableRow>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TableRow {
     pub cells: Vec<TableCell>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TableCell {
     pub runs: Vec<Run>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ListElement {
     pub items: Vec<ListItem>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ListItem {
     pub level: u32,
     pub is_ordered: bool,
     pub runs: Vec<Run>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ElementPosition {
+    pub x: i64,
+    pub y: i64,
 }
