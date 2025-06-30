@@ -2,7 +2,7 @@
 //!
 //! This example demonstrates how to open a PPTX file and convert all slides to Markdown.
 //!
-//! Run with: cargo run --example basic_usage <path/to/your/presentation.pptx>
+//! Run with: cargo run --example basic_usage <path/to/your/presentation.pptx> <extract_images>
 
 use pptx_to_md::{PptxContainer, Result, ParserConfig, ImageHandlingMode};
 use std::env;
@@ -16,15 +16,22 @@ fn main() -> Result<()> {
     let pptx_path = if args.len() > 1 {
         &args[1]
     } else {
-        eprintln!("Usage: cargo run --example basic_usage <path/to/presentation.pptx>");
+        eprintln!("Usage: cargo run --example basic_usage <path/to/presentation.pptx> <extract_images>\ncargo run --example basic_usage sample.pptx true");
         return Ok(());
     };
-
+    
+    // Tries to read if the extract_images flag is false else set to true
+    let extract_images = if args.len() > 2 {
+        !(args[2] == "false" || args[2] == "False" || args[2] == "0")
+    } else {
+        true
+    };
+    
     println!("Processing PPTX file: {}", pptx_path);
 
     // Use the config builder to build your config
     let config = ParserConfig::builder()
-        .extract_images(true)
+        .extract_images(extract_images)
         .compress_images(true)
         .quality(75)
         .image_handling_mode(ImageHandlingMode::InMarkdown)
