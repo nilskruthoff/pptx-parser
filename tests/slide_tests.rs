@@ -1,4 +1,4 @@
-﻿use pptx_to_md::{Formatting, ListElement, ListItem, ParserConfig, Run, Slide, SlideElement, TableCell, TableElement, TableRow, TextElement};
+﻿use pptx_to_md::{ElementPosition, Formatting, ListElement, ListItem, ParserConfig, Run, Slide, SlideElement, TableCell, TableElement, TableRow, TextElement};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -39,7 +39,7 @@ fn test_markdown_table_conversion() {
                         TableCell { runs: vec![Run { text: "21".into(), formatting: Formatting::default() }]},
                     ]},
                 ]
-            })
+            }, ElementPosition::default())
         ],
         images: vec![],
         image_data: HashMap::new(),
@@ -68,7 +68,7 @@ fn test_markdown_list_conversion() {
                     ListItem { level:1, is_ordered:false, runs: vec![Run{text: "Layer 2 Element 2".into(), formatting: Formatting::default()}]},
                     ListItem { level:0, is_ordered:false, runs: vec![Run{text: "Layer 1 Element 2".into(), formatting: Formatting::default()}]},
                 ]
-            })
+            }, ElementPosition::default())
         ],
         images: vec![],
         image_data: HashMap::new(),
@@ -90,11 +90,11 @@ fn test_formatting_conversion() {
         rel_path: "ppt/slides/slide1.xml".to_string(),
         slide_number: 1,
         elements: vec![
-            SlideElement::Text(TextElement { runs: vec![Run { text: "bold\n".into(), formatting: Formatting { bold: true, italic: false, underlined: false, lang: "en-US".into() } }]}),
-            SlideElement::Text(TextElement { runs: vec![Run { text: "cursive\n".into(), formatting: Formatting { bold: false, italic: true, underlined: false, lang: "en-US".into() } }]}),
-            SlideElement::Text(TextElement { runs: vec![Run { text: "underlined\n".into(), formatting: Formatting { bold: false, italic: false, underlined: true, lang: "en-US".into() } }]}),
-            SlideElement::Text(TextElement { runs: vec![Run { text: "bold and cursive\n".into(), formatting: Formatting { bold: true, italic: true, underlined: false, lang: "en-US".into() } }]}),
-            SlideElement::Text(TextElement { runs: vec![Run { text: "bold, cursive and underlined\n".into(), formatting: Formatting { bold: true, italic: true, underlined: true, lang: "en-US".into() } }]}),
+            SlideElement::Text(TextElement { runs: vec![Run { text: "bold\n".into(), formatting: Formatting { bold: true, italic: false, underlined: false, lang: "en-US".into() } }]}, ElementPosition::default()),
+            SlideElement::Text(TextElement { runs: vec![Run { text: "cursive\n".into(), formatting: Formatting { bold: false, italic: true, underlined: false, lang: "en-US".into() } }]}, ElementPosition::default()),
+            SlideElement::Text(TextElement { runs: vec![Run { text: "underlined\n".into(), formatting: Formatting { bold: false, italic: false, underlined: true, lang: "en-US".into() } }]}, ElementPosition::default()),
+            SlideElement::Text(TextElement { runs: vec![Run { text: "bold and cursive\n".into(), formatting: Formatting { bold: true, italic: true, underlined: false, lang: "en-US".into() } }]}, ElementPosition::default()),
+            SlideElement::Text(TextElement { runs: vec![Run { text: "bold, cursive and underlined\n".into(), formatting: Formatting { bold: true, italic: true, underlined: true, lang: "en-US".into() } }]}, ElementPosition::default()),
         ],
         images: vec![],
         image_data: HashMap::new(),

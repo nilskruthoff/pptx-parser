@@ -1,9 +1,12 @@
 ﻿use crate::constants::{A_NAMESPACE, P_NAMESPACE, RELS_NAMESPACE};
 use crate::types::{SlideElement, TableCell, TableElement, TableRow, TextElement};
-use crate::SlideElement::Unknown;
-use crate::{Error, Formatting, ImageReference, ListElement, ListItem, Result, Run};
+use crate::{ElementPosition, Error, Formatting, ImageReference, ListElement, ListItem, Result, Run};
 use roxmltree::{Document, Node};
 
+enum ParsedContent {
+    Text(TextElement),
+    List(ListElement),
+}
 
 /// Parses raw XML slide data from a PowerPoint (pptx) file and extracts all slide elements.
 ///
@@ -49,28 +52,48 @@ pub fn parse_slide_xml(xml_data: &[u8]) -> Result<Vec<SlideElement>> {
 
     let mut elements = Vec::new();
     for child_node in sp_tree.children().filter(|n| n.is_element()) {
-        let tag_name = child_node.tag_name().name();
-        let namespace = child_node.tag_name().namespace().unwrap_or("");
-        if namespace == P_NAMESPACE {
-            match tag_name {
-                "sp" => {
-                    let slide = parse_sp(&child_node)?;
-                    elements.push(slide);
-                },
-                "graphicFrame" => {
-                    if let Some(element) = parse_graphic_frame(&child_node)? {
-                        elements.push(element);
-                    }
-                },
-                "pic" => {
-                    let image_element = parse_pic(&child_node)?;
-                    elements.push(image_element);
-                },
-                _ => {
-                    elements.push(Unknown)
-                }
+        elements.extend(parse_group(&child_node)?);
+    }
+
+    Ok(elements)
+}
+
+/// Parst eine gesamte Gruppe und alle untergeordneten Kind-Elemente rekursiv
+fn parse_group(node: &Node) -> Result<Vec<SlideElement>> {
+    let mut elements = Vec::new();
+
+    let tag_name = node.tag_name().name();
+    let namespace = node.tag_name().namespace().unwrap_or("");
+
+    if namespace != P_NAMESPACE {
+        return Ok(elements);
+    }
+
+    let position = extract_position(node);
+
+    match tag_name {
+        "sp" => {
+            let position = extract_position(node);
+            match parse_sp(node)? {
+                ParsedContent::Text(text) => elements.push(SlideElement::Text(text, position)),
+                ParsedContent::List(list) => elements.push(SlideElement::List(list, position)),
             }
-        }
+        },
+        "graphicFrame" => {
+            if let Some(graphic_element) = parse_graphic_frame(&node)? {
+                elements.push(SlideElement::Table(graphic_element, position));
+            }
+        },
+        "pic" => {
+            let image_reference = parse_pic(&node)?;
+            elements.push(SlideElement::Image(image_reference, position));
+        },
+        "grpSp" => {
+            for child in node.children().filter(|n| n.is_element()) {
+                elements.extend(parse_group(&child)?);
+            }
+        },
+        _ => elements.push(SlideElement::Unknown),
     }
 
     Ok(elements)
@@ -78,12 +101,10 @@ pub fn parse_slide_xml(xml_data: &[u8]) -> Result<Vec<SlideElement>> {
 
 /// Parses the text body node (`<p:txBody>`) ito search for shape nodes (`<a:sp>`) and
 /// evaluates if a shape is a formatted list or a common text
-fn parse_sp(sp_node: &Node) -> Result<SlideElement> {
-    let tx_body_node = sp_node.children().find(|n| {
-        n.is_element()
-            && n.tag_name().name() == "txBody"
-            && n.tag_name().namespace() == Some(P_NAMESPACE)
-    }).ok_or(Error::Unknown)?;
+fn parse_sp(sp_node: &Node) -> Result<ParsedContent> {
+    let tx_body_node = sp_node.children()
+        .find(|n| n.tag_name().name() == "txBody" && n.tag_name().namespace() == Some(P_NAMESPACE))
+        .ok_or(Error::Unknown)?;
 
     let is_list = tx_body_node.descendants().any(|n| {
         n.is_element()
@@ -101,9 +122,9 @@ fn parse_sp(sp_node: &Node) -> Result<SlideElement> {
     });
 
     if is_list {
-        parse_list(&tx_body_node)
+        Ok(ParsedContent::List(parse_list(&tx_body_node)?))
     } else {
-        parse_text(&tx_body_node)
+        Ok(ParsedContent::Text(parse_text(&tx_body_node)?))
     }
 }
 
@@ -112,7 +133,7 @@ fn parse_sp(sp_node: &Node) -> Result<SlideElement> {
 /// Returns a `Result` containing either:
 /// - `SlideElement::Text`: A text element containing all text runs
 /// - `Error`: Error information encapsulated in [`crate::Error`] if parsing fails at XML parsing level.
-fn parse_text(tx_body_node: &Node) -> Result<SlideElement> {
+fn parse_text(tx_body_node: &Node) -> Result<TextElement> {
     let mut runs = Vec::new();
 
     for p_node in tx_body_node.children().filter(|n| {
@@ -124,10 +145,10 @@ fn parse_text(tx_body_node: &Node) -> Result<SlideElement> {
         runs.append(&mut paragraph_runs);
     }
 
-    Ok(SlideElement::Text(TextElement { runs }))
+    Ok(TextElement { runs })
 }
 
-fn parse_graphic_frame(node: &Node) -> Result<Option<SlideElement>> {
+fn parse_graphic_frame(node: &Node) -> Result<Option<TableElement>> {
     let graphic_data_node = node
         .descendants()
         .find(|n| {
@@ -143,7 +164,7 @@ fn parse_graphic_frame(node: &Node) -> Result<Option<SlideElement>> {
             .find(|n| n.is_element() && n.tag_name().name() == "tbl" && n.tag_name().namespace() == Some(A_NAMESPACE))
         {
             let table = parse_table(&tbl_node)?;
-            return Ok(Some(SlideElement::Table(table)));
+            return Ok(Some(table));
         }
     }
 
@@ -218,7 +239,7 @@ fn parse_table_cell(tc_node: &Node) -> Result<TableCell> {
 /// Returns a `Result` with:
 /// - `SlideElement::Image`: A `SlideElement` containing the image's reference `ID` to link it if successfully parsed.
 /// - `Error::ImageNotFound`: If the `<blip>` element or necessary attributes are missing.
-fn parse_pic(pic_node: &Node) -> Result<SlideElement> {
+fn parse_pic(pic_node: &Node) -> Result<ImageReference> {
     let blip_node = pic_node
         .descendants()
         .find(|n| n.is_element() && n.tag_name().name() == "blip" && n.tag_name().namespace() == Some(A_NAMESPACE))
@@ -233,7 +254,7 @@ fn parse_pic(pic_node: &Node) -> Result<SlideElement> {
         target: String::new(),
     };
 
-    Ok(SlideElement::Image(image_ref))
+    Ok(image_ref)
 }
 
 /// Parses the paragraph node (`<a:p>`) that is already identified as a list from the text body node (`<p:txBody>`)
@@ -242,7 +263,7 @@ fn parse_pic(pic_node: &Node) -> Result<SlideElement> {
 /// # Returns
 /// - `SlideElement::List`: A complete lists with all children of type `ListElement`
 /// - `Error`: Error information encapsulated in [`crate::Error`] if parsing fails at XML parsing level.
-fn parse_list(tx_body_node: &Node) -> Result<SlideElement> {
+fn parse_list(tx_body_node: &Node) -> Result<ListElement> {
     let mut items = Vec::new();
 
     for p_node in tx_body_node.children().filter(|n| {
@@ -257,7 +278,7 @@ fn parse_list(tx_body_node: &Node) -> Result<SlideElement> {
         items.push(ListItem { level, is_ordered, runs });
     }
 
-    Ok(SlideElement::List(ListElement { items }))
+    Ok(ListElement { items })
 }
 
 /// Extracts list properties from a paragraph node (``<a:p>`).
@@ -360,11 +381,32 @@ fn parse_run(r_node: &Node) -> Result<Run> {
     Ok(Run { text, formatting })
 }
 
+fn extract_position(node: &Node) -> ElementPosition {
+    let default = ElementPosition::default();
+
+    node.descendants()
+        .find(|n| n.tag_name().namespace() == Some(A_NAMESPACE) && n.tag_name().name() == "xfrm")
+        .and_then(|xfrm| {
+            let x = xfrm
+                .children()
+                .find(|n| n.tag_name().name() == "off" && n.tag_name().namespace() == Some(A_NAMESPACE))
+                .and_then(|off| off.attribute("x")?.parse::<i64>().ok())?;
+
+            let y = xfrm
+                .children()
+                .find(|n| n.tag_name().name() == "off" && n.tag_name().namespace() == Some(A_NAMESPACE))
+                .and_then(|off| off.attribute("y")?.parse::<i64>().ok())?;
+
+            Some(ElementPosition { x, y })
+        })
+        .unwrap_or(default)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::fs;
     use std::path::PathBuf;
-    use super::*;
 
     fn load_xml(filename: &str) -> String {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -391,14 +433,13 @@ mod tests {
         let tx_body_node = doc.root_element();
 
         match parse_text(&tx_body_node) {
-            Ok(SlideElement::Text(text_element)) => {
+            Ok(text_element) => {
                 assert_eq!(text_element.runs.len(), 3);
                 assert_eq!(normalize_test_string(&text_element.runs[0].text), normalize_test_string("Hello"));
                 assert_eq!(normalize_test_string(&text_element.runs[1].text), normalize_test_string("World"));
                 assert_eq!(normalize_test_string(&text_element.runs[2].text), normalize_test_string("!"));
             },
             Err(_) => panic!("Fehler beim Parsen der XML-Datei"),
-            _ => {}
         }
     }
 
@@ -586,7 +627,7 @@ mod tests {
         let tx_body_node = doc.root_element();
 
         match parse_list(&tx_body_node) {
-            Ok(SlideElement::List(list)) => {
+            Ok(list) => {
                 assert_eq!(list.items.len(), 3, "List should have 3 items");
 
                 // Check the first item
@@ -604,7 +645,6 @@ mod tests {
                 assert!(list.items[2].is_ordered, "Third item should be ordered (has buChar)");
                 assert_eq!(normalize_test_string(&list.items[2].runs[0].text), normalize_test_string("Third item\n"), "Third item text mismatch");
             },
-            Ok(_) => panic!("Expected a List element but got something else"),
             Err(_) => panic!("Failed to parse simple list")
         }
     }
@@ -617,7 +657,7 @@ mod tests {
         let tx_body_node = doc.root_element();
 
         match parse_list(&tx_body_node) {
-            Ok(SlideElement::List(list)) => {
+            Ok(list) => {
                 assert_eq!(list.items.len(), 5, "List should have 5 items");
 
                 // Check first item (level 0, ordered)
@@ -640,7 +680,6 @@ mod tests {
                 assert!(list.items[4].is_ordered, "Fifth item should be ordered");
                 assert_eq!(normalize_test_string(&list.items[4].runs[0].text), normalize_test_string("Second main topic\n"), "Fifth item text mismatch");
             },
-            Ok(_) => panic!("Expected a List element but got something else"),
             Err(_) => panic!("Failed to parse multilevel list")
         }
     }
@@ -853,7 +892,7 @@ mod tests {
         let node = doc.root_element();
 
         match parse_graphic_frame(&node) {
-            Ok(Some(SlideElement::Table(table))) => {
+            Ok(Some(table)) => {
                 assert_eq!(table.rows.len(), 2, "Table should have 2 rows");
                 assert_eq!(table.rows[0].cells.len(), 2, "First row should have 2 cells");
 
@@ -861,7 +900,6 @@ mod tests {
                 assert_eq!(normalize_test_string(&table.rows[0].cells[0].runs[0].text), normalize_test_string("Cell 1,1"), "Cell content mismatch");
             },
             Ok(None) => panic!("Should have found a table, but got None"),
-            Ok(_) => panic!("Found a different slide element, expected a table"),
             Err(_) => panic!("Failed to parse graphic frame with table")
         }
     }
@@ -890,11 +928,10 @@ mod tests {
         let pic_node = doc.root_element();
 
         match parse_pic(&pic_node) {
-            Ok(SlideElement::Image(image_ref)) => {
+            Ok(image_ref) => {
                 assert_eq!(image_ref.id, "rId2", "Image reference ID should be 'rId2'");
                 assert_eq!(image_ref.target, "", "Image target should be empty initially");
             },
-            Ok(_) => panic!("Expected an Image element but got something else"),
             Err(e) => panic!("Failed to parse picture: {:?}", e)
         }
     }
