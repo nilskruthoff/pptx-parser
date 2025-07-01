@@ -130,7 +130,7 @@ Include the following line in your Cargo.toml dependencies section:
 
 ```toml
 [dependencies]
-pptx-to-md = "0.3.0"
+pptx-to-md = "0.4.0"
 ```
 
 ---
