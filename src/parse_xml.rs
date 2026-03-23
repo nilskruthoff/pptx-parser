@@ -8,6 +8,48 @@ enum ParsedContent {
     List(ListElement),
 }
 
+/// Represents the accumulated coordinate transformation from a local element space
+/// into slide-level coordinates.
+///
+/// Grouped shapes in PPTX can define their own origin (`chOff`) and size (`chExt`)
+/// which must be mapped into the enclosing group frame (`off`/`ext`). This helper
+/// stores the current scaling and translation so child elements can be converted
+/// into their effective slide position.
+#[derive(Debug, Clone, Copy)]
+struct CoordinateTransform {
+    scale_x: f64,
+    scale_y: f64,
+    translate_x: f64,
+    translate_y: f64,
+}
+
+impl CoordinateTransform {
+    fn identity() -> Self {
+        Self {
+            scale_x: 1.0,
+            scale_y: 1.0,
+            translate_x: 0.0,
+            translate_y: 0.0,
+        }
+    }
+
+    fn apply(self, position: ElementPosition) -> ElementPosition {
+        ElementPosition {
+            x: (position.x as f64 * self.scale_x + self.translate_x).round() as i64,
+            y: (position.y as f64 * self.scale_y + self.translate_y).round() as i64,
+        }
+    }
+
+    fn then(self, next: CoordinateTransform) -> CoordinateTransform {
+        CoordinateTransform {
+            scale_x: self.scale_x * next.scale_x,
+            scale_y: self.scale_y * next.scale_y,
+            translate_x: self.scale_x * next.translate_x + self.translate_x,
+            translate_y: self.scale_y * next.translate_y + self.translate_y,
+        }
+    }
+}
+
 /// Parses raw XML slide data from a PowerPoint (pptx) file and extracts all slide elements.
 ///
 /// This function processes a single PowerPoint slide's XML data to identify and parse its
@@ -52,14 +94,17 @@ pub fn parse_slide_xml(xml_data: &[u8]) -> Result<Vec<SlideElement>> {
 
     let mut elements = Vec::new();
     for child_node in sp_tree.children().filter(|n| n.is_element()) {
-        elements.extend(parse_group(&child_node)?);
+        elements.extend(parse_group(&child_node, CoordinateTransform::identity())?);
     }
 
     Ok(elements)
 }
 
-/// Parst eine gesamte Gruppe und alle untergeordneten Kind-Elemente rekursiv
-fn parse_group(node: &Node) -> Result<Vec<SlideElement>> {
+/// Parses a slide node and all nested child nodes recursively.
+///
+/// The `transform` argument carries the accumulated group transformation so elements
+/// inside nested `<p:grpSp>` containers can be positioned in slide coordinates.
+fn parse_group(node: &Node, transform: CoordinateTransform) -> Result<Vec<SlideElement>> {
     let mut elements = Vec::new();
 
     let tag_name = node.tag_name().name();
@@ -69,11 +114,10 @@ fn parse_group(node: &Node) -> Result<Vec<SlideElement>> {
         return Ok(elements);
     }
 
-    let position = extract_position(node);
+    let position = extract_position(node, transform);
 
     match tag_name {
         "sp" => {
-            let position = extract_position(node);
             match parse_sp(node)? {
                 ParsedContent::Text(text) => elements.push(SlideElement::Text(text, position)),
                 ParsedContent::List(list) => elements.push(SlideElement::List(list, position)),
@@ -89,8 +133,9 @@ fn parse_group(node: &Node) -> Result<Vec<SlideElement>> {
             elements.push(SlideElement::Image(image_reference, position));
         },
         "grpSp" => {
+            let child_transform = transform.then(extract_group_transform(node));
             for child in node.children().filter(|n| n.is_element()) {
-                elements.extend(parse_group(&child)?);
+                elements.extend(parse_group(&child, child_transform)?);
             }
         },
         _ => elements.push(SlideElement::Unknown),
@@ -381,25 +426,94 @@ fn parse_run(r_node: &Node) -> Result<Run> {
     Ok(Run { text, formatting })
 }
 
-fn extract_position(node: &Node) -> ElementPosition {
-    let default = ElementPosition::default();
+/// Extracts the effective slide position for a node.
+///
+/// The node's local coordinates are read from its transform XML and then converted
+/// through the accumulated parent-group transform.
+fn extract_position(node: &Node, transform: CoordinateTransform) -> ElementPosition {
+    let local_position = extract_raw_position(node).unwrap_or_default();
+    transform.apply(local_position)
+}
 
-    node.descendants()
-        .find(|n| n.tag_name().namespace() == Some(A_NAMESPACE) && n.tag_name().name() == "xfrm")
-        .and_then(|xfrm| {
-            let x = xfrm
-                .children()
-                .find(|n| n.tag_name().name() == "off" && n.tag_name().namespace() == Some(A_NAMESPACE))
-                .and_then(|off| off.attribute("x")?.parse::<i64>().ok())?;
+/// Reads a node's local position directly from its XML transform element.
+///
+/// Different PPTX element types store their transform in different places:
+/// shapes and pictures use `<a:xfrm>` inside `<p:spPr>`, while tables inside
+/// `<p:graphicFrame>` use `<p:xfrm>`.
+fn extract_raw_position(node: &Node) -> Option<ElementPosition> {
+    let xfrm = match node.tag_name().name() {
+        "sp" | "pic" => node
+            .children()
+            .find(|n| n.is_element() && n.tag_name().name() == "spPr" && n.tag_name().namespace() == Some(P_NAMESPACE))
+            .and_then(|sp_pr| {
+                sp_pr.children().find(|n| {
+                    n.is_element() && n.tag_name().name() == "xfrm" && n.tag_name().namespace() == Some(A_NAMESPACE)
+                })
+            }),
+        "graphicFrame" => node.children().find(|n| {
+            n.is_element() && n.tag_name().name() == "xfrm" && n.tag_name().namespace() == Some(P_NAMESPACE)
+        }),
+        "grpSp" => node
+            .children()
+            .find(|n| n.is_element() && n.tag_name().name() == "grpSpPr" && n.tag_name().namespace() == Some(P_NAMESPACE))
+            .and_then(|grp_sp_pr| {
+                grp_sp_pr.children().find(|n| {
+                    n.is_element() && n.tag_name().name() == "xfrm" && n.tag_name().namespace() == Some(A_NAMESPACE)
+                })
+            }),
+        _ => None,
+    }?;
 
-            let y = xfrm
-                .children()
-                .find(|n| n.tag_name().name() == "off" && n.tag_name().namespace() == Some(A_NAMESPACE))
-                .and_then(|off| off.attribute("y")?.parse::<i64>().ok())?;
+    Some(ElementPosition {
+        x: extract_child_attr_i64(&xfrm, A_NAMESPACE, "off", "x")?,
+        y: extract_child_attr_i64(&xfrm, A_NAMESPACE, "off", "y")?,
+    })
+}
 
-            Some(ElementPosition { x, y })
-        })
-        .unwrap_or(default)
+/// Builds the transformation that maps a group's local child coordinates
+/// into the coordinate system of its parent.
+///
+/// PowerPoint groups define both a child origin/extent (`chOff`/`chExt`) and a
+/// rendered origin/extent (`off`/`ext`). The resulting transform combines scaling
+/// and translation so all nested elements can be reported in slide space.
+fn extract_group_transform(node: &Node) -> CoordinateTransform {
+    let Some(xfrm) = node
+        .children()
+        .find(|n| n.is_element() && n.tag_name().name() == "grpSpPr" && n.tag_name().namespace() == Some(P_NAMESPACE))
+        .and_then(|grp_sp_pr| {
+            grp_sp_pr.children().find(|n| {
+                n.is_element() && n.tag_name().name() == "xfrm" && n.tag_name().namespace() == Some(A_NAMESPACE)
+            })
+        }) else {
+        return CoordinateTransform::identity();
+    };
+
+    let off_x = extract_child_attr_i64(&xfrm, A_NAMESPACE, "off", "x").unwrap_or(0) as f64;
+    let off_y = extract_child_attr_i64(&xfrm, A_NAMESPACE, "off", "y").unwrap_or(0) as f64;
+    let ch_off_x = extract_child_attr_i64(&xfrm, A_NAMESPACE, "chOff", "x").unwrap_or(0) as f64;
+    let ch_off_y = extract_child_attr_i64(&xfrm, A_NAMESPACE, "chOff", "y").unwrap_or(0) as f64;
+    let ext_x = extract_child_attr_i64(&xfrm, A_NAMESPACE, "ext", "cx").unwrap_or(0) as f64;
+    let ext_y = extract_child_attr_i64(&xfrm, A_NAMESPACE, "ext", "cy").unwrap_or(0) as f64;
+    let ch_ext_x = extract_child_attr_i64(&xfrm, A_NAMESPACE, "chExt", "cx").unwrap_or(0) as f64;
+    let ch_ext_y = extract_child_attr_i64(&xfrm, A_NAMESPACE, "chExt", "cy").unwrap_or(0) as f64;
+
+    let scale_x = if ch_ext_x == 0.0 { 1.0 } else { ext_x / ch_ext_x };
+    let scale_y = if ch_ext_y == 0.0 { 1.0 } else { ext_y / ch_ext_y };
+
+    CoordinateTransform {
+        scale_x,
+        scale_y,
+        translate_x: off_x - ch_off_x * scale_x,
+        translate_y: off_y - ch_off_y * scale_y,
+    }
+}
+
+/// Reads an integer attribute from a direct child node with the given namespace and tag name.
+fn extract_child_attr_i64(node: &Node, namespace: &str, child_name: &str, attr_name: &str) -> Option<i64> {
+    node.children()
+        .find(|n| n.is_element() && n.tag_name().name() == child_name && n.tag_name().namespace() == Some(namespace))
+        .and_then(|child| child.attribute(attr_name))
+        .and_then(|value| value.parse::<i64>().ok())
 }
 
 #[cfg(test)]
@@ -965,6 +1079,118 @@ mod tests {
                 // This is the expected behavior - should fail with ImageNotFound
             },
             Err(e) => panic!("Expected ImageNotFound error but got: {:?}", e)
+        }
+    }
+
+    #[test]
+    fn test_parse_slide_xml_reads_graphic_frame_position_from_p_xfrm() {
+        let xml = r#"
+            <p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                   xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+              <p:cSld>
+                <p:spTree>
+                  <p:nvGrpSpPr/>
+                  <p:grpSpPr>
+                    <a:xfrm>
+                      <a:off x="0" y="0"/>
+                      <a:ext cx="0" cy="0"/>
+                      <a:chOff x="0" y="0"/>
+                      <a:chExt cx="0" cy="0"/>
+                    </a:xfrm>
+                  </p:grpSpPr>
+                  <p:graphicFrame>
+                    <p:nvGraphicFramePr/>
+                    <p:xfrm>
+                      <a:off x="111" y="222"/>
+                      <a:ext cx="333" cy="444"/>
+                    </p:xfrm>
+                    <a:graphic>
+                      <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">
+                        <a:tbl>
+                          <a:tr h="1">
+                            <a:tc>
+                              <a:txBody>
+                                <a:bodyPr/>
+                                <a:lstStyle/>
+                                <a:p><a:r><a:t>Cell</a:t></a:r></a:p>
+                              </a:txBody>
+                              <a:tcPr/>
+                            </a:tc>
+                          </a:tr>
+                        </a:tbl>
+                      </a:graphicData>
+                    </a:graphic>
+                  </p:graphicFrame>
+                </p:spTree>
+              </p:cSld>
+            </p:sld>
+        "#;
+
+        let elements = parse_slide_xml(xml.as_bytes()).expect("Failed to parse slide XML");
+
+        let table = elements.iter().find(|element| matches!(element, SlideElement::Table(_, _)))
+            .expect("Expected table element");
+
+        match table {
+            SlideElement::Table(_, position) => assert_eq!(*position, ElementPosition { x: 111, y: 222 }),
+            element => panic!("Expected table element, got {:?}", element),
+        }
+    }
+
+    #[test]
+    fn test_parse_slide_xml_applies_group_transform_to_child_positions() {
+        let xml = r#"
+            <p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                   xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+              <p:cSld>
+                <p:spTree>
+                  <p:nvGrpSpPr/>
+                  <p:grpSpPr>
+                    <a:xfrm>
+                      <a:off x="0" y="0"/>
+                      <a:ext cx="0" cy="0"/>
+                      <a:chOff x="0" y="0"/>
+                      <a:chExt cx="0" cy="0"/>
+                    </a:xfrm>
+                  </p:grpSpPr>
+                  <p:grpSp>
+                    <p:nvGrpSpPr/>
+                    <p:grpSpPr>
+                      <a:xfrm>
+                        <a:off x="1000" y="2000"/>
+                        <a:ext cx="4000" cy="6000"/>
+                        <a:chOff x="100" y="200"/>
+                        <a:chExt cx="2000" cy="3000"/>
+                      </a:xfrm>
+                    </p:grpSpPr>
+                    <p:sp>
+                      <p:nvSpPr/>
+                      <p:spPr>
+                        <a:xfrm>
+                          <a:off x="600" y="1700"/>
+                          <a:ext cx="1000" cy="1000"/>
+                        </a:xfrm>
+                      </p:spPr>
+                      <p:txBody>
+                        <a:bodyPr/>
+                        <a:lstStyle/>
+                        <a:p><a:r><a:t>Grouped</a:t></a:r></a:p>
+                      </p:txBody>
+                    </p:sp>
+                  </p:grpSp>
+                </p:spTree>
+              </p:cSld>
+            </p:sld>
+        "#;
+
+        let elements = parse_slide_xml(xml.as_bytes()).expect("Failed to parse slide XML");
+
+        let text = elements.iter().find(|element| matches!(element, SlideElement::Text(_, _)))
+            .expect("Expected text element");
+
+        match text {
+            SlideElement::Text(_, position) => assert_eq!(*position, ElementPosition { x: 2000, y: 5000 }),
+            element => panic!("Expected text element, got {:?}", element),
         }
     }
 }
