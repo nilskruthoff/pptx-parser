@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<draw:text-box xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">
+  <text:h text:outline-level="1"><text:span text:style-name="Bold">Heading</text:span></text:h>
+</draw:text-box>

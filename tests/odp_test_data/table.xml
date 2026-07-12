@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<table:table xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">
+  <table:table-row>
+    <table:table-cell table:number-columns-repeated="3"><text:p><text:span text:style-name="Bold">Heading</text:span></text:p></table:table-cell>
+  </table:table-row>
+  <table:table-row>
+    <table:table-cell><text:p>Value</text:p></table:table-cell>
+    <table:covered-table-cell/>
+    <table:table-cell><text:p>Third</text:p></table:table-cell>
+  </table:table-row>
+</table:table>

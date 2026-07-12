@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0">
+  <office:styles>
+    <style:style style:name="Bold" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style>
+    <text:list-style style:name="Bullets"><text:list-level-style-bullet text:level="1" text:bullet-char="-"/></text:list-style>
+    <text:list-style style:name="Numbers"><text:list-level-style-number text:level="2"/></text:list-style>
+  </office:styles>
+</office:document-styles>
