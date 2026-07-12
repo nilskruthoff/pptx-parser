@@ -1,5 +1,5 @@
 ﻿use super::{Result, Slide};
-use crate::constants::{SLIDE_LAYOUT_NAMESPACE, SLIDE_MASTER_NAMESPACE};
+use crate::constants::{COMMENTS_NAMESPACE, NOTES_SLIDE_NAMESPACE, SLIDE_LAYOUT_NAMESPACE, SLIDE_MASTER_NAMESPACE};
 use crate::parse_rels::parse_relationships;
 use crate::parse_xml::{extract_inherited_positions, InheritedPositions};
 use crate::parser_config::ParserConfig;
@@ -110,6 +110,8 @@ impl PptxContainer {
             let rels_data = self.read_file_from_archive(&rels_path).ok();
             let slide_number = Slide::extract_slide_number(slide_path).unwrap_or(0);
             let inherited_positions = self.resolve_inherited_positions(slide_path, rels_data.as_deref())?;
+            let speaker_notes = self.resolve_speaker_notes(slide_path, rels_data.as_deref())?;
+            let comments = self.resolve_comments(slide_path, rels_data.as_deref())?;
 
             // Preload images if enabled
             let mut slide_images = Vec::new();
@@ -125,7 +127,7 @@ impl PptxContainer {
                 }
             }
 
-            raw_data.push((slide_path.clone(), slide_number, slide_xml, slide_images, inherited_positions));
+            raw_data.push((slide_path.clone(), slide_number, slide_xml, slide_images, inherited_positions, speaker_notes, comments));
         }
 
         // Share image data atomically across threads
@@ -134,7 +136,7 @@ impl PptxContainer {
         // Parallel processing starts here (CPU-bound tasks)
         let slides: Result<Vec<_>> = raw_data
             .into_par_iter()
-            .map(|(path, number, xml, images, inherited_positions)| {
+            .map(|(path, number, xml, images, inherited_positions, speaker_notes, comments)| {
                 // Parse XML in parallel (CPU-intensive)
                 let elements = crate::parse_xml::parse_slide_xml_with_inherited_positions(&xml, &inherited_positions)?;
 
@@ -153,6 +155,8 @@ impl PptxContainer {
                     path,
                     number,
                     elements,
+                    speaker_notes,
+                    comments,
                     images,
                     image_map,
                     config.clone(),
@@ -201,6 +205,8 @@ impl PptxContainer {
         // parse slide and preload images
         let slide_number = Slide::extract_slide_number(slide_path).unwrap_or(0);
         let inherited_positions = self.resolve_inherited_positions(slide_path, rels_data.as_deref())?;
+        let speaker_notes = self.resolve_speaker_notes(slide_path, rels_data.as_deref())?;
+        let comments = self.resolve_comments(slide_path, rels_data.as_deref())?;
         let elements = crate::parse_xml::parse_slide_xml_with_inherited_positions(&slide_data, &inherited_positions)?;
         
         let mut images = Vec::new();
@@ -226,6 +232,8 @@ impl PptxContainer {
             slide_path.to_string(),
             slide_number,
             elements,
+            speaker_notes,
+            comments,
             images,
             image_data,
             config,
@@ -322,6 +330,46 @@ impl PptxContainer {
         extract_inherited_positions(&layout_xml, &master_positions)
     }
 
+    fn resolve_speaker_notes(
+        &mut self,
+        slide_path: &str,
+        slide_rels_data: Option<&[u8]>,
+    ) -> Result<Vec<crate::TextElement>> {
+        let Some(slide_rels_data) = slide_rels_data else {
+            return Ok(Vec::new());
+        };
+        let relationships = parse_relationships(slide_rels_data)?;
+        let Some(notes_target) = relationships
+            .iter()
+            .find(|rel| rel.rel_type == NOTES_SLIDE_NAMESPACE)
+            .map(|rel| rel.target.as_str()) else {
+                return Ok(Vec::new());
+            };
+        let notes_path = Self::resolve_target_path(slide_path, notes_target);
+        let notes_xml = self.read_file_from_archive(&notes_path)?;
+        crate::parse_xml::parse_speaker_notes_xml(&notes_xml)
+    }
+
+    fn resolve_comments(
+        &mut self,
+        slide_path: &str,
+        slide_rels_data: Option<&[u8]>,
+    ) -> Result<Vec<crate::TextElement>> {
+        let Some(slide_rels_data) = slide_rels_data else {
+            return Ok(Vec::new());
+        };
+        let relationships = parse_relationships(slide_rels_data)?;
+        let Some(comment_target) = relationships
+            .iter()
+            .find(|rel| rel.rel_type == COMMENTS_NAMESPACE || rel.rel_type.ends_with("/comments"))
+            .map(|rel| rel.target.as_str()) else {
+                return Ok(Vec::new());
+            };
+        let comment_path = Self::resolve_target_path(slide_path, comment_target);
+        let comment_xml = self.read_file_from_archive(&comment_path)?;
+        crate::parse_xml::parse_comments_xml(&comment_xml)
+    }
+
     pub fn resolve_target_path(base_path: &str, target: &str) -> String {
         let mut parts: Vec<&str> = if target.starts_with('/') {
             Vec::new()
@@ -356,6 +404,9 @@ fn sort_slide_paths(slide_paths: &mut [String]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
 
     #[test]
     fn test_sort_slide_paths_numerically() {
@@ -392,6 +443,47 @@ mod tests {
         );
 
         assert_eq!(resolved, "ppt/slideLayouts/slideLayout3.xml");
+    }
+
+    #[test]
+    fn loads_speaker_notes_from_a_slide_relationship() {
+        let path = std::env::temp_dir().join(format!(
+            "pptx-to-md-speaker-notes-{}.pptx",
+            std::process::id()
+        ));
+        let file = fs::File::create(&path).expect("create temporary PPTX");
+        let mut archive = zip::ZipWriter::new(file);
+        let options = SimpleFileOptions::default();
+
+        archive
+            .start_file("ppt/slides/slide1.xml", options)
+            .expect("start slide entry");
+        archive
+            .write_all(br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree/></p:cSld></p:sld>"#)
+            .expect("write slide entry");
+        archive
+            .start_file("ppt/slides/_rels/slide1.xml.rels", options)
+            .expect("start relationship entry");
+        archive
+            .write_all(br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notesSlides/notesSlide1.xml"/></Relationships>"#)
+            .expect("write relationship entry");
+        archive
+            .start_file("ppt/notesSlides/notesSlide1.xml", options)
+            .expect("start notes entry");
+        archive
+            .write_all(br#"<p:notes xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:nvSpPr><p:nvPr><p:ph type="body"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:r><a:t>Presenter detail</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:notes>"#)
+            .expect("write notes entry");
+        archive.finish().expect("finish temporary PPTX");
+
+        let mut container = PptxContainer::open(&path, ParserConfig::default())
+            .expect("open temporary PPTX");
+        let slides = container.parse_all().expect("parse temporary PPTX");
+        assert_eq!(slides.len(), 1);
+        assert_eq!(slides[0].speaker_notes.len(), 1);
+        assert_eq!(slides[0].speaker_notes[0].runs[0].text, "Presenter detail\n");
+
+        drop(container);
+        fs::remove_file(path).expect("remove temporary PPTX");
     }
 }
 
