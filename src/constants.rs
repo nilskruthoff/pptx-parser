@@ -4,3 +4,5 @@ pub const RELS_NAMESPACE: &str = "http://schemas.openxmlformats.org/officeDocume
 pub const IMAGE_NAMESPACE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 pub const SLIDE_LAYOUT_NAMESPACE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout";
 pub const SLIDE_MASTER_NAMESPACE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster";
+pub const NOTES_SLIDE_NAMESPACE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
+pub const COMMENTS_NAMESPACE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
