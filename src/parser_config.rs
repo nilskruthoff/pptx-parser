@@ -30,7 +30,9 @@ pub enum ImageHandlingMode {
 /// | `image_quality`           | `u8`                  | `80`          | Compression level (0-100);<br/> higher values retain more detail but increase file size                   |
 /// | `image_handling_mode`     | `ImageHandlingMode`   | `InMarkdown`  | Determines how images are handled during content export                                                   |
 /// | `image_output_path`       | `Option<PathBuf>`     | `None`        | Output directory path for `ImageHandlingMode::Save` (mandatory for the saving mode)                       |
-/// | `include_slide_comment`   | `bool`                | `true`        | Weather the slide number comment is included or not (`<!-- Slide [n] -->`)                                |
+/// | `include_slide_number_as_comment`   | `bool`                | `true`        | Weather the slide number comment is included or not (`<!-- Slide [n] -->`)                                |
+/// | `include_speaker_notes`   | `bool`                | `false`       | Whether speaker notes are appended to Markdown as blockquotes                                               |
+/// | `include_comments`        | `bool`                | `false`       | Whether presentation comments are appended to Markdown as blockquotes                                       |
 ///
 /// # Example
 ///
@@ -53,7 +55,9 @@ pub struct ParserConfig {
     pub quality: u8,
     pub image_handling_mode: ImageHandlingMode,
     pub image_output_path: Option<PathBuf>,
-    pub include_slide_comment: bool,
+    pub include_slide_number_as_comment: bool,
+    pub include_speaker_notes: bool,
+    pub include_comments: bool,
 }
 
 impl Default for ParserConfig {
@@ -64,7 +68,9 @@ impl Default for ParserConfig {
             quality: 80,
             image_handling_mode: ImageHandlingMode::InMarkdown,
             image_output_path: None,
-            include_slide_comment: true,
+            include_slide_number_as_comment: true,
+            include_speaker_notes: false,
+            include_comments: false,
         }
     }
 }
@@ -85,7 +91,9 @@ pub struct ParserConfigBuilder {
     image_quality: Option<u8>,
     image_handling_mode: Option<ImageHandlingMode>,
     image_output_path: Option<PathBuf>,
-    include_slide_comment: Option<bool>,
+    include_slide_number_as_comment: Option<bool>,
+    include_speaker_notes: Option<bool>,
+    include_comments: Option<bool>,
 }
 
 impl ParserConfigBuilder {
@@ -123,9 +131,21 @@ impl ParserConfigBuilder {
         self
     }
 
-    /// Sets weather comments with current slide number are included or not
-    pub fn include_slide_comment(mut self, value: bool) -> Self {
-        self.include_slide_comment = Some(value);
+    /// Sets weather comments with the current slide number are included or not
+    pub fn include_slide_number_as_comment(mut self, value: bool) -> Self {
+        self.include_slide_number_as_comment = Some(value);
+        self
+    }
+
+    /// Sets whether speaker notes are appended to Markdown as blockquotes.
+    pub fn include_speaker_notes(mut self, value: bool) -> Self {
+        self.include_speaker_notes = Some(value);
+        self
+    }
+
+    /// Sets whether presentation comments are appended to Markdown as blockquotes.
+    pub fn include_comments(mut self, value: bool) -> Self {
+        self.include_comments = Some(value);
         self
     }
     
@@ -137,7 +157,9 @@ impl ParserConfigBuilder {
             quality: self.image_quality.unwrap_or(80),
             image_handling_mode: self.image_handling_mode.unwrap_or(ImageHandlingMode::InMarkdown),
             image_output_path: self.image_output_path,
-            include_slide_comment: self.include_slide_comment.unwrap_or(true),
+            include_slide_number_as_comment: self.include_slide_number_as_comment.unwrap_or(true),
+            include_speaker_notes: self.include_speaker_notes.unwrap_or(false),
+            include_comments: self.include_comments.unwrap_or(false),
         }
     }
 }
