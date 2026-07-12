@@ -316,7 +316,9 @@ fn parse_text_container(
 ) -> Result<()> {
     let paragraphs: Vec<_> = node
         .children()
-        .filter(|child| is_element(*child, TEXT_NS, "p"))
+        .filter(|child| {
+            is_element(*child, TEXT_NS, "p") || is_element(*child, TEXT_NS, "h")
+        })
         .collect();
     if !paragraphs.is_empty() {
         let mut runs = Vec::new();
@@ -574,3 +576,7 @@ fn is_element(node: Node<'_, '_>, namespace: &str, name: &str) -> bool {
         && node.tag_name().namespace() == Some(namespace)
         && node.tag_name().name() == name
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/odp_tests.rs"]
+mod tests;
