@@ -22,6 +22,24 @@ fn text_from_slide(slide: &Slide) -> Vec<String> {
         .collect()
 }
 
+fn speaker_note_text(slide: &Slide) -> String {
+    slide
+        .speaker_notes
+        .iter()
+        .flat_map(|note| note.runs.iter())
+        .map(|run| run.text.as_str())
+        .collect()
+}
+
+fn comment_text(slide: &Slide) -> String {
+    slide
+        .comments
+        .iter()
+        .flat_map(|comment| comment.runs.iter())
+        .map(|run| run.text.as_str())
+        .collect()
+}
+
 fn fixture_config() -> ParserConfig {
     ParserConfig::builder().extract_images(false).build()
 }
@@ -129,12 +147,14 @@ fn parses_real_odp_fixture_and_preserves_slide_order() {
     assert_eq!(container.format(), PresentationFormat::Odp);
     let slides = container.parse_all().expect("parse ODP fixture");
 
-    assert_eq!(slides.len(), 5);
+    assert_eq!(slides.len(), 6);
     assert!(text_from_slide(&slides[0]).join("\n").contains("ODP Parser Fixture"));
     assert!(text_from_slide(&slides[1]).join("\n").contains("Lists"));
     assert!(text_from_slide(&slides[2]).join("\n").contains("Tables"));
     assert!(text_from_slide(&slides[3]).join("\n").contains("Grouped elements"));
     assert!(text_from_slide(&slides[4]).join("\n").contains("Sorting and empty content"));
+    assert_eq!(speaker_note_text(&slides[5]), "Speaker notes\n");
+    assert_eq!(comment_text(&slides[5]), "Comment\n");
 }
 
 #[test]

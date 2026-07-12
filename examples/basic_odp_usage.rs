@@ -32,7 +32,9 @@ fn main() -> Result<()> {
         .compress_images(true)
         .quality(75)
         .image_handling_mode(ImageHandlingMode::InMarkdown)
-        .include_slide_comment(true)
+        .include_slide_number_as_comment(true)
+        .include_comments(true)
+        .include_speaker_notes(true)
         .build();
 
     let mut container = PresentationContainer::open(Path::new(odp_path), config)?;

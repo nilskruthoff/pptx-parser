@@ -15,6 +15,7 @@ const TABLE_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
 const SVG_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
 const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 const FO_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
+const PRESENTATION_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0";
 
 pub(crate) struct OdpContainer {
     config: ParserConfig,
@@ -56,6 +57,8 @@ impl OdpContainer {
             .ok_or(Error::SlideNotFound)?;
         let styles = StyleResolver::from_documents(&self.content, &self.styles)?;
         let elements = parse_page(page, &styles)?;
+        let speaker_notes = parse_speaker_notes(page, &styles)?;
+        let comments = parse_comments(page, &styles)?;
         let images: Vec<ImageReference> = elements
             .iter()
             .filter_map(|element| match element {
@@ -76,6 +79,8 @@ impl OdpContainer {
             format!("content.xml#page{}", index + 1),
             (index + 1) as u32,
             elements,
+            speaker_notes,
+            comments,
             images,
             image_data,
             self.config.clone(),
@@ -275,6 +280,64 @@ fn parse_page(page: Node<'_, '_>, styles: &StyleResolver) -> Result<Vec<SlideEle
         parse_node(child, ElementPosition::default(), styles, &mut elements)?;
     }
     Ok(elements)
+}
+
+fn parse_speaker_notes(page: Node<'_, '_>, styles: &StyleResolver) -> Result<Vec<TextElement>> {
+    let mut elements = Vec::new();
+    for notes in page
+        .children()
+        .filter(|node| is_element(*node, PRESENTATION_NS, "notes"))
+    {
+        for child in notes.children().filter(|node| node.is_element()) {
+            parse_node(child, ElementPosition::default(), styles, &mut elements)?;
+        }
+    }
+    Ok(elements
+        .into_iter()
+        .filter_map(|element| match element {
+            SlideElement::Text(text, _) => Some(text),
+            _ => None,
+        })
+        .collect())
+}
+
+fn parse_comments(page: Node<'_, '_>, styles: &StyleResolver) -> Result<Vec<TextElement>> {
+    let mut elements = Vec::new();
+    for annotation in page.descendants().filter(|node| {
+        node.is_element() && node.tag_name().name() == "annotation"
+    }) {
+        parse_text_container(annotation, ElementPosition::default(), styles, &mut elements)?;
+    }
+    Ok(elements
+        .into_iter()
+        .filter_map(|element| match element {
+            SlideElement::Text(text, _) => Some(text),
+            _ => None,
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod speaker_notes_tests {
+    use super::*;
+
+    #[test]
+    fn parses_text_from_odp_speaker_notes_only() {
+        let xml = r#"
+            <draw:page xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+                       xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"
+                       xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">
+                <draw:custom-shape><text:p>Slide content</text:p></draw:custom-shape>
+                <presentation:notes><draw:custom-shape><text:p>Speaker note</text:p></draw:custom-shape></presentation:notes>
+            </draw:page>
+        "#;
+        let document = Document::parse(xml).expect("parse ODP XML");
+        let notes = parse_speaker_notes(document.root_element(), &StyleResolver::default())
+            .expect("parse speaker notes");
+
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].runs[0].text, "Speaker note\n");
+    }
 }
 
 fn parse_node(

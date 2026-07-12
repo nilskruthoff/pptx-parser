@@ -881,3 +881,23 @@
 
         assert_eq!(position, ElementPosition { x: 900, y: 800 });
     }
+
+    #[test]
+    fn parses_only_body_content_from_speaker_notes() {
+        let xml = br#"<?xml version="1.0" encoding="UTF-8"?>
+<p:notes xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+         xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <p:cSld><p:spTree>
+    <p:sp><p:nvSpPr><p:nvPr><p:ph type="dt"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:r><a:t>Ignored date</a:t></a:r></a:p></p:txBody></p:sp>
+    <p:sp><p:nvSpPr><p:nvPr><p:ph type="body"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:r><a:t>First note</a:t></a:r></a:p><a:p><a:r><a:t>Second note</a:t></a:r></a:p></p:txBody></p:sp>
+    <p:sp><p:nvSpPr><p:nvPr><p:ph type="sldNum"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:r><a:t>Ignored number</a:t></a:r></a:p></p:txBody></p:sp>
+  </p:spTree></p:cSld>
+</p:notes>"#;
+
+        let notes = parse_speaker_notes_xml(xml).expect("parse speaker notes");
+        assert_eq!(notes.len(), 1);
+        assert_eq!(
+            notes[0].runs.iter().map(|run| run.text.as_str()).collect::<String>(),
+            "First note\nSecond note\n"
+        );
+    }

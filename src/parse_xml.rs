@@ -122,6 +122,88 @@ pub fn parse_slide_xml(xml_data: &[u8]) -> Result<Vec<SlideElement>> {
     parse_slide_xml_with_inherited_positions(xml_data, &InheritedPositions::default())
 }
 
+/// Parses the user-authored text from a PPTX notes slide.
+///
+/// Notes slides also contain placeholders for dates, footers, and slide numbers.
+/// Only the `body` placeholder is speaker-note content and is therefore returned.
+pub(crate) fn parse_speaker_notes_xml(xml_data: &[u8]) -> Result<Vec<TextElement>> {
+    let xml_str = std::str::from_utf8(xml_data).map_err(|_| Error::Unknown)?;
+    let doc = Document::parse(xml_str)?;
+    let root = doc.root_element();
+    let ns = root.tag_name().namespace();
+
+    let c_sld = root
+        .descendants()
+        .find(|node| node.tag_name().name() == "cSld" && node.tag_name().namespace() == ns)
+        .ok_or(Error::Unknown)?;
+    let sp_tree = c_sld
+        .children()
+        .find(|node| node.tag_name().name() == "spTree" && node.tag_name().namespace() == ns)
+        .ok_or(Error::Unknown)?;
+
+    let mut notes = Vec::new();
+    for shape in sp_tree.children().filter(|node| {
+        node.is_element()
+            && node.tag_name().name() == "sp"
+            && node.tag_name().namespace() == Some(P_NAMESPACE)
+            && is_notes_body_placeholder(*node)
+    }) {
+        if let Some(text_body) = shape.children().find(|node| {
+            node.is_element()
+                && node.tag_name().name() == "txBody"
+                && node.tag_name().namespace() == Some(P_NAMESPACE)
+        }) {
+            let text = parse_text(&text_body)?;
+            if !text.runs.is_empty() {
+                notes.push(text);
+            }
+        }
+    }
+    Ok(notes)
+}
+
+/// Parses text content from both legacy and modern PPTX comment parts.
+pub(crate) fn parse_comments_xml(xml_data: &[u8]) -> Result<Vec<TextElement>> {
+    let xml_str = std::str::from_utf8(xml_data).map_err(|_| Error::Unknown)?;
+    let doc = Document::parse(xml_str)?;
+    let mut comments = Vec::new();
+
+    for text_body in doc.descendants().filter(|node| {
+        node.is_element() && node.tag_name().name() == "txBody"
+    }) {
+        let text = parse_text(&text_body)?;
+        if !text.runs.is_empty() {
+            comments.push(text);
+        }
+    }
+
+    if comments.is_empty() {
+        for text in doc.descendants().filter(|node| {
+            node.is_element()
+                && node.tag_name().name() == "text"
+                && node.tag_name().namespace() == Some(P_NAMESPACE)
+        }) {
+            let content = text.text().unwrap_or_default();
+            if !content.is_empty() {
+                comments.push(TextElement {
+                    runs: vec![Run { text: format!("{}\n", content), formatting: Formatting::default() }],
+                });
+            }
+        }
+    }
+
+    Ok(comments)
+}
+
+fn is_notes_body_placeholder(shape: Node<'_, '_>) -> bool {
+    shape.descendants().any(|node| {
+        node.is_element()
+            && node.tag_name().name() == "ph"
+            && node.tag_name().namespace() == Some(P_NAMESPACE)
+            && node.attribute("type") == Some("body")
+    })
+}
+
 /// Parses raw slide XML and resolves missing placeholder positions from inherited sources.
 pub fn parse_slide_xml_with_inherited_positions(
     xml_data: &[u8],

@@ -39,7 +39,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .quality(80)
         .image_handling_mode(ImageHandlingMode::InMarkdown)
         .image_output_path(None)
-        .include_slide_comment(true)
+        .include_slide_number_as_comment(true)
+        .include_speaker_notes(false)
+        .include_comments(false)
         .build();
 
     let mut container = PresentationContainer::open(
@@ -122,7 +124,9 @@ let slides = presentation.parse_all()?;
 | `image_quality`          | `u8`                  | `80`          | Defines the image compression quality `(0-100)`. Higher values mean better quality but larger file sizes. |
 | `image_handling_mode`    | `ImageHandlingMode`   | `InMarkdown`  | Determines how images are handled during content export                                                   |
 | `image_output_path`      | `Option<PathBuf>`     | `None`        | Output directory path for `ImageHandlingMode::Save` (mandatory for saving mode)                           |
-| `include_slide_comment`  | `bool`                | `true`        | Weather the slide number comment is included or not (`<!-- Slide [n] -->`)                                | 
+| `include_slide_number_as_comment`  | `bool`                | `true`        | Weather the slide number comment is included or not (`<!-- Slide [n] -->`)                                | 
+| `include_speaker_notes`  | `bool`                | `false`       | Whether speaker notes are appended to Markdown as blockquotes                                             |
+| `include_comments`       | `bool`                | `false`       | Whether presentation comments are appended to Markdown as blockquotes                                     |
 <br/>
 
 #### Member of `ImageHandlingMode`

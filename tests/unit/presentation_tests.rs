@@ -41,16 +41,36 @@ fn list_item_text(item: &crate::ListItem) -> String {
     item.runs.iter().map(|run| run.text.as_str()).collect()
 }
 
+fn speaker_note_text(slide: &Slide) -> String {
+    slide
+        .speaker_notes
+        .iter()
+        .flat_map(|note| note.runs.iter())
+        .map(|run| run.text.as_str())
+        .collect()
+}
+
+fn comment_text(slide: &Slide) -> String {
+    slide
+        .comments
+        .iter()
+        .flat_map(|comment| comment.runs.iter())
+        .map(|run| run.text.as_str())
+        .collect()
+}
+
 #[test]
 fn parses_real_pptx_fixture_and_preserves_slide_order() {
     let Some(slides) = parse_pptx_fixture() else { return; };
 
-    assert_eq!(slides.len(), 5);
+    assert_eq!(slides.len(), 6);
     assert!(slide_text(&slides[0]).contains("PPTX Parser Fixtures"));
     assert!(slide_text(&slides[1]).contains("Lists"));
     assert!(slide_text(&slides[2]).contains("Tables"));
     assert!(slide_text(&slides[3]).contains("Grouped elements"));
     assert!(slide_text(&slides[4]).contains("Sorting and empty content"));
+    assert_eq!(speaker_note_text(&slides[5]), "Speaker notes\n");
+    assert_eq!(comment_text(&slides[5]), "Comment\n");
 }
 
 #[test]
