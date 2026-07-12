@@ -3,6 +3,37 @@ use crate::types::ImageReference;
 use crate::{Error, Result};
 use roxmltree::Document;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Relationship {
+    pub id: String,
+    pub rel_type: String,
+    pub target: String,
+}
+
+/// Parses package relationship (`.rels`) XML data and extracts all relationships.
+pub fn parse_relationships(xml_data: &[u8]) -> Result<Vec<Relationship>> {
+    let xml_str = std::str::from_utf8(xml_data).map_err(|_| Error::Unknown)?;
+    let doc = Document::parse(xml_str)?;
+    let root = doc.root_element();
+
+    let mut relationships = Vec::new();
+    for rel in root.children().filter(|n| n.is_element() && n.tag_name().name() == "Relationship") {
+        if let (Some(id), Some(rel_type), Some(target)) = (
+            rel.attribute("Id"),
+            rel.attribute("Type"),
+            rel.attribute("Target"),
+        ) {
+            relationships.push(Relationship {
+                id: id.to_string(),
+                rel_type: rel_type.to_string(),
+                target: target.to_string(),
+            });
+        }
+    }
+
+    Ok(relationships)
+}
+
 /// Parses relationship (`.rels`) XML data from a PPTX slide, extracting image references.
 ///
 /// PowerPoint slide relationships data contain mappings between resource IDs and their targets.
@@ -25,27 +56,14 @@ use roxmltree::Document;
 /// - Malformed or invalid XML structure is detected.
 /// ```
 pub fn parse_slide_rels(xml_data: &[u8]) -> Result<Vec<ImageReference>> {
-    let xml_str = std::str::from_utf8(xml_data).map_err(|_| Error::Unknown)?;
-    let doc = Document::parse(xml_str)?;
-    let root = doc.root_element();
-
-    let mut images = Vec::new();
-    for rel in root.children().filter(|n| n.is_element() && n.tag_name().name() == "Relationship") {
-        if let Some(rel_type) = rel.attribute("Type") {
-            if rel_type == IMAGE_NAMESPACE {
-                if let Some(id) = rel.attribute("Id") {
-                    if let Some(target) = rel.attribute("Target") {
-                        images.push(ImageReference {
-                            id: id.to_string(),
-                            target: target.to_string(),
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(images)
+    Ok(parse_relationships(xml_data)?
+        .into_iter()
+        .filter(|rel| rel.rel_type == IMAGE_NAMESPACE)
+        .map(|rel| ImageReference {
+            id: rel.id,
+            target: rel.target,
+        })
+        .collect())
 }
 
 #[cfg(test)]
