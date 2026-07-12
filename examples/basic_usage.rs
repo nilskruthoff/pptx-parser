@@ -1,6 +1,8 @@
 ﻿//! Basic usage example for the pptx-to-md crate
 //!
 //! This example demonstrates how to open a PPTX file and convert all slides to Markdown.
+//! It uses `PptxContainer` as the PPTX-only backwards-compatible API. New code that
+//! should support both PPTX and ODP should prefer `PresentationContainer`.
 //!
 //! Run with: cargo run --example basic_usage <path/to/your/presentation.pptx> <extract_images>
 
