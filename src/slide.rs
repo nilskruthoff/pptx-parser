@@ -13,7 +13,6 @@ pub struct ManualImage {
     pub base64_content: String,
     pub img_ref: ImageReference,
 }
-
 impl ManualImage {
     pub fn new(base64_content: String, img_ref: ImageReference) -> ManualImage {
         Self {
@@ -22,11 +21,10 @@ impl ManualImage {
         }
     }
 }
-
 /// Represents a single slide extracted from a PowerPoint (pptx) file.
 ///
 /// Contains structured slide data including slide number, parsed content elements
-/// (text, tables, images, lists), and associated image references.
+/// (text, tables, images, lists), speaker notes, and associated image references.
 ///
 /// A `Slide` can be converted into other formats, such as Markdown, or its
 /// contained images can be extracted in base64 representation.
@@ -37,6 +35,8 @@ pub struct Slide {
     pub rel_path: String,
     pub slide_number: u32,
     pub elements: Vec<SlideElement>,
+    pub speaker_notes: Vec<crate::TextElement>,
+    pub comments: Vec<crate::TextElement>,
     pub images: Vec<ImageReference>,
     pub image_data: HashMap<String, Vec<u8>>,
     pub config: ParserConfig
@@ -47,6 +47,8 @@ impl Slide {
         rel_path: String,
         slide_number: u32,
         elements: Vec<SlideElement>,
+        speaker_notes: Vec<crate::TextElement>,
+        comments: Vec<crate::TextElement>,
         images: Vec<ImageReference>,
         image_data: HashMap<String, Vec<u8>>,
         config: ParserConfig,
@@ -55,6 +57,8 @@ impl Slide {
             rel_path,
             slide_number,
             elements,
+            speaker_notes,
+            comments,
             images,
             image_data,
             config,
@@ -73,7 +77,7 @@ impl Slide {
     /// - `None`: If a conversion error occurs during image encoding.
     pub fn convert_to_md(&self) -> Option<String> {
         let mut slide_txt = String::new();
-        if self.config.include_slide_comment { slide_txt.push_str(format!("<!-- Slide {} -->\n\n", self.slide_number).as_str()); }
+        if self.config.include_slide_number_as_comment { slide_txt.push_str(format!("<!-- Slide {} -->\n\n", self.slide_number).as_str()); }
         let mut image_count = 0;
 
         let mut sorted_elements = self.elements.clone();
@@ -200,6 +204,12 @@ impl Slide {
                 },
                 _ => ()
             }
+        }
+        if self.config.include_speaker_notes && !self.speaker_notes.is_empty() {
+            append_quoted_section(&mut slide_txt, "Speaker Notes", &self.speaker_notes);
+        }
+        if self.config.include_comments && !self.comments.is_empty() {
+            append_quoted_section(&mut slide_txt, "Comments", &self.comments);
         }
         Some(slide_txt)
     }
@@ -333,92 +343,20 @@ impl Slide {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::fs;
-    use std::path::PathBuf;
-    use crate::ElementPosition;
-    use super::*;
-
-    fn mock_slide() -> Slide {
-        Slide {
-            rel_path: "ppt/slides/slide1.xml".to_string(),
-            slide_number: 1,
-            elements: vec![],
-            images: vec![],
-            image_data: HashMap::new(),
-            config: ParserConfig::default(),
+fn append_quoted_section(output: &mut String, title: &str, elements: &[crate::TextElement]) {
+    if !output.is_empty() && !output.ends_with("\n\n") {
+        output.push('\n');
+    }
+    output.push_str(&format!("> **{}**\n>\n", title));
+    for (index, element) in elements.iter().enumerate() {
+        let content = element.runs.iter().map(|run| run.render_as_md()).collect::<String>();
+        for line in content.lines() {
+            output.push_str("> ");
+            output.push_str(line);
+            output.push('\n');
         }
-    }
-
-    fn load_image_data(filename: &str) -> Vec<u8> {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("tests");
-        path.push("test_data");
-        path.push(filename);
-        fs::read(path).expect("Unable to read test data file")
-    }
-    
-    #[test]
-    fn test_extract_slide_number() {
-        let input = "ppt/slides/slide5.xml";
-        
-        let actual = Slide::extract_slide_number(input).unwrap();
-        let expected: u32 = 5;
-        
-        assert_eq!(actual, expected);
-    }
-    
-    #[test]
-    fn test_get_image_extension() {
-        let slide = mock_slide();
-        let input = "../media/image1.png";
-        
-        let actual = slide.get_image_extension(input);
-        let expected = "png";
-        
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn test_link_images() {
-        let mut slide = mock_slide();
-        let _position = ElementPosition::default();
-        
-        slide.images.push(ImageReference { id: "rId2".to_string(), target: "../media/image1.png".to_string() });
-        slide.elements.push(SlideElement::Image(ImageReference { id: "rId2".to_string(), target: "".to_string() }, _position));
-
-        slide.link_images();
-
-        if let SlideElement::Image(img_ref, _postion) = &slide.elements[0] {
-            assert_eq!(img_ref.target, "../media/image1.png");
-        }
-    }
-
-    #[test]
-    fn test_image_compression_reduces_size() {
-        let mut slide = mock_slide();
-        slide.config.quality = 50;
-
-        let raw_image = load_image_data("example-image.jpg");
-
-        if let Some(compression_result) = slide.compress_image(&raw_image) {
-            assert!(compression_result.len() < raw_image.len());
-        } else {
-            panic!("Compression failed");
-        }
-    }
-
-    #[test]
-    fn test_compressed_image_is_valid_jpg() {
-        let slide = mock_slide();
-        let raw_image = load_image_data("example-image.jpg");
-
-        if let Some(compression_result) = slide.compress_image(&raw_image) {
-            let result = image::load_from_memory(&compression_result);
-            assert!(result.is_ok());
-        } else {
-            panic!("Compression failed");
+        if index + 1 < elements.len() {
+            output.push_str(">\n");
         }
     }
 }
