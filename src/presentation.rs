@@ -127,3 +127,7 @@ impl Iterator for PresentationSlideIterator<'_> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/presentation_tests.rs"]
+mod tests;
