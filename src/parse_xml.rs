@@ -2,6 +2,7 @@
 use crate::types::{SlideElement, TableCell, TableElement, TableRow, TextElement};
 use crate::{ElementPosition, Error, Formatting, ImageReference, ListElement, ListItem, Result, Run};
 use roxmltree::{Document, Node};
+use std::collections::HashMap;
 
 enum ParsedContent {
     Text(TextElement),
@@ -50,6 +51,47 @@ impl CoordinateTransform {
     }
 }
 
+/// Identifies a placeholder shape across slide, layout, and master documents.
+///
+/// PowerPoint placeholders are primarily matched by `type` and `idx`. Some
+/// layouts omit the type attribute, so resolution falls back from exact match
+/// to looser combinations when needed.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PlaceholderKey {
+    kind: Option<String>,
+    idx: Option<String>,
+}
+
+/// Holds inherited placeholder positions resolved from slide layouts and masters.
+#[derive(Debug, Clone, Default)]
+pub struct InheritedPositions {
+    positions: HashMap<PlaceholderKey, ElementPosition>,
+}
+
+impl InheritedPositions {
+    fn resolve(&self, key: &PlaceholderKey) -> Option<ElementPosition> {
+        self.positions
+            .get(key)
+            .copied()
+            .or_else(|| {
+                key.idx.as_ref().and_then(|idx| {
+                    self.positions
+                        .iter()
+                        .find(|(candidate, _)| candidate.idx.as_deref() == Some(idx.as_str()))
+                        .map(|(_, position)| *position)
+                })
+            })
+            .or_else(|| {
+                key.kind.as_ref().and_then(|kind| {
+                    self.positions
+                        .iter()
+                        .find(|(candidate, _)| candidate.kind.as_deref() == Some(kind.as_str()))
+                        .map(|(_, position)| *position)
+                })
+            })
+    }
+}
+
 /// Parses raw XML slide data from a PowerPoint (pptx) file and extracts all slide elements.
 ///
 /// This function processes a single PowerPoint slide's XML data to identify and parse its
@@ -77,6 +119,14 @@ impl CoordinateTransform {
 /// - The function strictly follows Microsoft's Open XML slide schema.
 /// - For best results, ensure input XML data is extracted directly from PPTX files or equivalent sources.
 pub fn parse_slide_xml(xml_data: &[u8]) -> Result<Vec<SlideElement>> {
+    parse_slide_xml_with_inherited_positions(xml_data, &InheritedPositions::default())
+}
+
+/// Parses raw slide XML and resolves missing placeholder positions from inherited sources.
+pub fn parse_slide_xml_with_inherited_positions(
+    xml_data: &[u8],
+    inherited_positions: &InheritedPositions,
+) -> Result<Vec<SlideElement>> {
     let xml_str = std::str::from_utf8(xml_data).map_err(|_| Error::Unknown)?;
     let doc = Document::parse(xml_str)?;
     let root = doc.root_element();
@@ -94,7 +144,7 @@ pub fn parse_slide_xml(xml_data: &[u8]) -> Result<Vec<SlideElement>> {
 
     let mut elements = Vec::new();
     for child_node in sp_tree.children().filter(|n| n.is_element()) {
-        elements.extend(parse_group(&child_node, CoordinateTransform::identity())?);
+        elements.extend(parse_group(&child_node, CoordinateTransform::identity(), inherited_positions)?);
     }
 
     Ok(elements)
@@ -104,7 +154,7 @@ pub fn parse_slide_xml(xml_data: &[u8]) -> Result<Vec<SlideElement>> {
 ///
 /// The `transform` argument carries the accumulated group transformation so elements
 /// inside nested `<p:grpSp>` containers can be positioned in slide coordinates.
-fn parse_group(node: &Node, transform: CoordinateTransform) -> Result<Vec<SlideElement>> {
+fn parse_group(node: &Node, transform: CoordinateTransform, inherited_positions: &InheritedPositions) -> Result<Vec<SlideElement>> {
     let mut elements = Vec::new();
 
     let tag_name = node.tag_name().name();
@@ -114,7 +164,7 @@ fn parse_group(node: &Node, transform: CoordinateTransform) -> Result<Vec<SlideE
         return Ok(elements);
     }
 
-    let position = extract_position(node, transform);
+    let position = extract_position(node, transform, inherited_positions);
 
     match tag_name {
         "sp" => {
@@ -135,7 +185,7 @@ fn parse_group(node: &Node, transform: CoordinateTransform) -> Result<Vec<SlideE
         "grpSp" => {
             let child_transform = transform.then(extract_group_transform(node));
             for child in node.children().filter(|n| n.is_element()) {
-                elements.extend(parse_group(&child, child_transform)?);
+                elements.extend(parse_group(&child, child_transform, inherited_positions)?);
             }
         },
         _ => elements.push(SlideElement::Unknown),
@@ -430,9 +480,11 @@ fn parse_run(r_node: &Node) -> Result<Run> {
 ///
 /// The node's local coordinates are read from its transform XML and then converted
 /// through the accumulated parent-group transform.
-fn extract_position(node: &Node, transform: CoordinateTransform) -> ElementPosition {
-    let local_position = extract_raw_position(node).unwrap_or_default();
-    transform.apply(local_position)
+fn extract_position(node: &Node, transform: CoordinateTransform, inherited_positions: &InheritedPositions) -> ElementPosition {
+    extract_raw_position(node)
+        .map(|position| transform.apply(position))
+        .or_else(|| extract_placeholder_key(node).and_then(|key| inherited_positions.resolve(&key)))
+        .unwrap_or_default()
 }
 
 /// Reads a node's local position directly from its XML transform element.
@@ -514,6 +566,86 @@ fn extract_child_attr_i64(node: &Node, namespace: &str, child_name: &str, attr_n
         .find(|n| n.is_element() && n.tag_name().name() == child_name && n.tag_name().namespace() == Some(namespace))
         .and_then(|child| child.attribute(attr_name))
         .and_then(|value| value.parse::<i64>().ok())
+}
+
+fn extract_placeholder_key(node: &Node) -> Option<PlaceholderKey> {
+    let placeholder = node
+        .descendants()
+        .find(|n| n.is_element() && n.tag_name().name() == "ph" && n.tag_name().namespace() == Some(P_NAMESPACE))?;
+
+    Some(PlaceholderKey {
+        kind: placeholder.attribute("type").map(|value| value.to_string()),
+        idx: placeholder.attribute("idx").map(|value| value.to_string()),
+    })
+}
+
+/// Extracts placeholder positions from a layout or master XML document.
+///
+/// Placeholder nodes that do not define their own transform inherit their
+/// position from the provided `inherited_positions`.
+pub fn extract_inherited_positions(
+    xml_data: &[u8],
+    inherited_positions: &InheritedPositions,
+) -> Result<InheritedPositions> {
+    let xml_str = std::str::from_utf8(xml_data).map_err(|_| Error::Unknown)?;
+    let doc = Document::parse(xml_str)?;
+    let root = doc.root_element();
+
+    let c_sld = root
+        .descendants()
+        .find(|n| n.tag_name().name() == "cSld" && n.tag_name().namespace() == root.tag_name().namespace())
+        .ok_or(Error::Unknown)?;
+
+    let sp_tree = c_sld
+        .children()
+        .find(|n| n.tag_name().name() == "spTree" && n.tag_name().namespace() == root.tag_name().namespace())
+        .ok_or(Error::Unknown)?;
+
+    let mut positions = inherited_positions.positions.clone();
+    collect_placeholder_positions(&sp_tree, CoordinateTransform::identity(), inherited_positions, &mut positions);
+
+    Ok(InheritedPositions { positions })
+}
+
+fn collect_placeholder_positions(
+    node: &Node,
+    transform: CoordinateTransform,
+    inherited_positions: &InheritedPositions,
+    positions: &mut HashMap<PlaceholderKey, ElementPosition>,
+) {
+    for child in node.children().filter(|n| n.is_element()) {
+        if child.tag_name().namespace() != Some(P_NAMESPACE) {
+            continue;
+        }
+
+        if child.tag_name().name() == "grpSp" {
+            let child_transform = transform.then(extract_group_transform(&child));
+            collect_placeholder_positions(&child, child_transform, inherited_positions, positions);
+            continue;
+        }
+
+        if let Some(key) = extract_placeholder_key(&child) {
+            let position = extract_raw_position(&child)
+                .map(|local| transform.apply(local))
+                .or_else(|| inherited_positions.resolve(&key));
+
+            if let Some(position) = position {
+                insert_placeholder_position(positions, key, position);
+            }
+        }
+    }
+}
+
+fn insert_placeholder_position(
+    positions: &mut HashMap<PlaceholderKey, ElementPosition>,
+    key: PlaceholderKey,
+    position: ElementPosition,
+) {
+    if let Some(idx) = key.idx.as_deref() {
+        positions.retain(|candidate, _| candidate.idx.as_deref() != Some(idx));
+    }
+
+    positions.insert(key, position);
 }
 
 #[cfg(test)]
@@ -1192,5 +1324,205 @@ mod tests {
             SlideElement::Text(_, position) => assert_eq!(*position, ElementPosition { x: 2000, y: 5000 }),
             element => panic!("Expected text element, got {:?}", element),
         }
+    }
+
+    #[test]
+    fn test_parse_slide_xml_uses_inherited_placeholder_position() {
+        let xml = r#"
+            <p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                   xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+              <p:cSld>
+                <p:spTree>
+                  <p:nvGrpSpPr/>
+                  <p:grpSpPr>
+                    <a:xfrm>
+                      <a:off x="0" y="0"/>
+                      <a:ext cx="0" cy="0"/>
+                      <a:chOff x="0" y="0"/>
+                      <a:chExt cx="0" cy="0"/>
+                    </a:xfrm>
+                  </p:grpSpPr>
+                  <p:sp>
+                    <p:nvSpPr>
+                      <p:cNvPr id="2" name="Title"/>
+                      <p:cNvSpPr/>
+                      <p:nvPr><p:ph type="title"/></p:nvPr>
+                    </p:nvSpPr>
+                    <p:spPr/>
+                    <p:txBody>
+                      <a:bodyPr/>
+                      <a:lstStyle/>
+                      <a:p><a:r><a:t>Inherited title</a:t></a:r></a:p>
+                    </p:txBody>
+                  </p:sp>
+                </p:spTree>
+              </p:cSld>
+            </p:sld>
+        "#;
+
+        let mut positions = HashMap::new();
+        positions.insert(
+            PlaceholderKey {
+                kind: Some("title".to_string()),
+                idx: None,
+            },
+            ElementPosition { x: 695326, y: 333375 },
+        );
+
+        let inherited = InheritedPositions { positions };
+        let elements = parse_slide_xml_with_inherited_positions(xml.as_bytes(), &inherited)
+            .expect("Failed to parse slide XML");
+
+        let text = elements.iter().find(|element| matches!(element, SlideElement::Text(_, _)))
+            .expect("Expected text element");
+
+        match text {
+            SlideElement::Text(_, position) => assert_eq!(*position, ElementPosition { x: 695326, y: 333375 }),
+            element => panic!("Expected text element, got {:?}", element),
+        }
+    }
+
+    #[test]
+    fn test_extract_inherited_positions_falls_back_to_master_placeholder() {
+        let master_xml = r#"
+            <p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                         xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+              <p:cSld>
+                <p:spTree>
+                  <p:nvGrpSpPr/>
+                  <p:grpSpPr>
+                    <a:xfrm>
+                      <a:off x="0" y="0"/>
+                      <a:ext cx="0" cy="0"/>
+                      <a:chOff x="0" y="0"/>
+                      <a:chExt cx="0" cy="0"/>
+                    </a:xfrm>
+                  </p:grpSpPr>
+                  <p:sp>
+                    <p:nvSpPr>
+                      <p:cNvPr id="2" name="Footer"/>
+                      <p:cNvSpPr/>
+                      <p:nvPr><p:ph type="ftr" idx="11"/></p:nvPr>
+                    </p:nvSpPr>
+                    <p:spPr>
+                      <a:xfrm><a:off x="100" y="200"/><a:ext cx="300" cy="400"/></a:xfrm>
+                    </p:spPr>
+                  </p:sp>
+                </p:spTree>
+              </p:cSld>
+            </p:sldMaster>
+        "#;
+
+        let layout_xml = r#"
+            <p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                         xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+              <p:cSld>
+                <p:spTree>
+                  <p:nvGrpSpPr/>
+                  <p:grpSpPr>
+                    <a:xfrm>
+                      <a:off x="0" y="0"/>
+                      <a:ext cx="0" cy="0"/>
+                      <a:chOff x="0" y="0"/>
+                      <a:chExt cx="0" cy="0"/>
+                    </a:xfrm>
+                  </p:grpSpPr>
+                  <p:sp>
+                    <p:nvSpPr>
+                      <p:cNvPr id="4" name="Footer"/>
+                      <p:cNvSpPr/>
+                      <p:nvPr><p:ph type="ftr" idx="11"/></p:nvPr>
+                    </p:nvSpPr>
+                    <p:spPr/>
+                  </p:sp>
+                </p:spTree>
+              </p:cSld>
+            </p:sldLayout>
+        "#;
+
+        let master_positions = extract_inherited_positions(master_xml.as_bytes(), &InheritedPositions::default())
+            .expect("Failed to parse master positions");
+        let layout_positions = extract_inherited_positions(layout_xml.as_bytes(), &master_positions)
+            .expect("Failed to parse layout positions");
+
+        let position = layout_positions.resolve(&PlaceholderKey {
+            kind: Some("ftr".to_string()),
+            idx: Some("11".to_string()),
+        }).expect("Expected footer placeholder position");
+
+        assert_eq!(position, ElementPosition { x: 100, y: 200 });
+    }
+
+    #[test]
+    fn test_extract_inherited_positions_prefers_layout_placeholder_with_same_idx() {
+        let master_xml = r#"
+            <p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                         xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+              <p:cSld>
+                <p:spTree>
+                  <p:nvGrpSpPr/>
+                  <p:grpSpPr>
+                    <a:xfrm>
+                      <a:off x="0" y="0"/>
+                      <a:ext cx="0" cy="0"/>
+                      <a:chOff x="0" y="0"/>
+                      <a:chExt cx="0" cy="0"/>
+                    </a:xfrm>
+                  </p:grpSpPr>
+                  <p:sp>
+                    <p:nvSpPr>
+                      <p:cNvPr id="2" name="Footer"/>
+                      <p:cNvSpPr/>
+                      <p:nvPr><p:ph type="ftr" idx="11"/></p:nvPr>
+                    </p:nvSpPr>
+                    <p:spPr>
+                      <a:xfrm><a:off x="100" y="200"/><a:ext cx="300" cy="400"/></a:xfrm>
+                    </p:spPr>
+                  </p:sp>
+                </p:spTree>
+              </p:cSld>
+            </p:sldMaster>
+        "#;
+
+        let layout_xml = r#"
+            <p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                         xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+              <p:cSld>
+                <p:spTree>
+                  <p:nvGrpSpPr/>
+                  <p:grpSpPr>
+                    <a:xfrm>
+                      <a:off x="0" y="0"/>
+                      <a:ext cx="0" cy="0"/>
+                      <a:chOff x="0" y="0"/>
+                      <a:chExt cx="0" cy="0"/>
+                    </a:xfrm>
+                  </p:grpSpPr>
+                  <p:sp>
+                    <p:nvSpPr>
+                      <p:cNvPr id="4" name="Footer"/>
+                      <p:cNvSpPr/>
+                      <p:nvPr><p:ph idx="11"/></p:nvPr>
+                    </p:nvSpPr>
+                    <p:spPr>
+                      <a:xfrm><a:off x="900" y="800"/><a:ext cx="300" cy="400"/></a:xfrm>
+                    </p:spPr>
+                  </p:sp>
+                </p:spTree>
+              </p:cSld>
+            </p:sldLayout>
+        "#;
+
+        let master_positions = extract_inherited_positions(master_xml.as_bytes(), &InheritedPositions::default())
+            .expect("Failed to parse master positions");
+        let layout_positions = extract_inherited_positions(layout_xml.as_bytes(), &master_positions)
+            .expect("Failed to parse layout positions");
+
+        let position = layout_positions.resolve(&PlaceholderKey {
+            kind: Some("ftr".to_string()),
+            idx: Some("11".to_string()),
+        }).expect("Expected footer placeholder position");
+
+        assert_eq!(position, ElementPosition { x: 900, y: 800 });
     }
 }
