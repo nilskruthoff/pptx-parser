@@ -1,4 +1,4 @@
-﻿#[derive(Debug)]
+#[derive(Debug)]
 pub struct Presentation {
     pub slides: Vec<Slide>,
 }
@@ -52,6 +52,7 @@ pub struct Formatting {
 pub struct Run {
     pub text: String,
     pub formatting: Formatting,
+    pub link_target: Option<String>,
 }
 
 impl Run {
@@ -83,10 +84,14 @@ impl Run {
             result = format!("<u>{}</u>", result);
         }
 
-        if has_new_line {
-            return format!("{}\n", result)
+        if let Some(target) = &self.link_target {
+            result = format!("[{}]({})", result, target);
         }
-        
+
+        if has_new_line {
+            return format!("{}\n", result);
+        }
+
         result
     }
 }
