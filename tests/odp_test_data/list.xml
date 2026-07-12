@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<text:list xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" text:style-name="Bullets">
+  <text:list-item>
+    <text:p>First</text:p>
+    <text:list text:style-name="Numbers"><text:list-item><text:p>Second</text:p></text:list-item></text:list>
+  </text:list-item>
+</text:list>

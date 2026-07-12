@@ -2,12 +2,15 @@ mod container;
 mod slide;
 mod types;
 mod constants;
+mod odp;
 pub mod parse_xml;
 pub mod parse_rels;
 mod parser_config;
+mod presentation;
 
 pub use container::PptxContainer;
 pub use parser_config::{ParserConfig, ImageHandlingMode};
+pub use presentation::{PresentationContainer, PresentationFormat, PresentationSlideIterator};
 pub use slide::Slide;
 pub use types::*;
 

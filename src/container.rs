@@ -25,9 +25,13 @@ pub struct PptxContainer {
 
 impl PptxContainer {
     /// Opens a PowerPoint pptx file and initializes a `PptxContainer`.
+    /// 
+    /// _For new code that should support both `.pptx` and `.odp`, prefer
+    /// [`PresentationContainer`]. This type remains available for PPTX-only
+    /// workflows and backwards compatibility._
     ///
     /// Processes the given file, extracting its internal files into memory. After initialization, the 
-    /// container holds slide XML data, relationships files (*.rels), and associated resources.
+    /// container holds slide XML data, relationship files (*.rels), and associated resources.
     ///
     /// # Arguments
     ///
@@ -162,7 +166,7 @@ impl PptxContainer {
     }
 
     
-    pub fn iter_slides(&mut self) -> SlideIterator {
+    pub fn iter_slides(&mut self) -> SlideIterator<'_> {
         SlideIterator::new(self)
     }
 
