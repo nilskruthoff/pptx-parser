@@ -6,11 +6,13 @@
 ![License](https://img.shields.io/crates/l/pptx-to-md.svg)
 
 `pptx-to-md` is a library to parse Microsoft PowerPoint (`.pptx`) slides and convert them into structured Markdown content and data, making it easy to process, use, or integrate slide data programmatically.
+It also supports OpenDocument Presentation (`.odp`).
 
 ---
 
 ## 🚀 Features
 
+- 🖥️ **Compatibility:** Supports `.pptx` and `.odp` files
 - 📄 **Extract Slide Text:** Parses and extracts text elements from slides.
 - 📋 **Lists & Tables:** Recognizes and formats lists (ordered/unordered) and tables into Markdown.
 - 🖼️ **Embedded Images:** Supports embedded images extraction as base64-encoded inline images.
@@ -22,10 +24,10 @@
 
 ## 👨‍💻 Example Usage
 
-Here's an easy example to convert a PowerPoint slide into Markdown*:
+`PresentationContainer` is the recommended entry point for new code. It detects whether the input is a PowerPoint (`.pptx`) or OpenDocument Presentation (`.odp`) file and exposes the same parsing API for both formats.
 
 ```rust
-use pptx_to_md::{PptxContainer, ParserConfig};
+use pptx_to_md::{ImageHandlingMode, ParserConfig, PresentationContainer, SlideElement};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -39,28 +41,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .image_output_path(None)
         .include_slide_comment(true)
         .build();
-    // alternatively use `let config = ParserConfig::default();`
-    
-    // open the container with the path to your .pptx file
-    let pptx_container = PptxContainer::open(Path::new("path/to/your/presentation.pptx"), config)?;
-    
-    // Parse all slides' xml at once single- or multithreaded
+
+    let mut container = PresentationContainer::open(
+        Path::new("path/to/your/presentation.pptx"), // or .odp
+        config,
+    )?;
+
+    println!("Detected format: {:?}", container.format());
+
     let slides = container.parse_all()?; // or `parse_all_multi_threaded()?`
-    
+
     for slide in slides {
-        // Convert each slide into Markdown
         if let Some(md_content) = slide.convert_to_md() {
             println!("{}", md_content);
         }
 
-        // Or iterate over each slide element and match them to add custom logic
         for element in &slide.elements {
             match element {
-                SlideElement::Text(text) => { println!("{:?}\n", text) }
-                SlideElement::Table(table) => { println!("{:?}\n", table) }
-                SlideElement::Image(image_reference) => { println!("{:?}\n", image_reference) }
-                SlideElement::List(list) => { println!("{:?}\n", list) }
-                SlideElement::Unknown => { println!("An Unknown element was found.\n") }
+                SlideElement::Text(text, position) => println!("{:?} at {:?}\n", text, position),
+                SlideElement::Table(table, position) => println!("{:?} at {:?}\n", table, position),
+                SlideElement::Image(image_reference, position) => {
+                    println!("{:?} at {:?}\n", image_reference, position)
+                }
+                SlideElement::List(list, position) => println!("{:?} at {:?}\n", list, position),
+                SlideElement::Unknown => println!("An unknown element was found.\n"),
             }
         }
     }
@@ -69,7 +73,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-*for more usage examples refer to the [examples](https://github.com/nilskruthoff/pptx-parser/tree/master/examples) directory
+For ODP-specific usage, see [`examples/basic_odp_usage.rs`](https://github.com/nilskruthoff/pptx-parser/tree/master/examples/basic_odp_usage.rs).
+For PPTX-only code, `PptxContainer` remains available for backwards compatibility and for callers that explicitly want the old PowerPoint-only entry point. New code that may handle both formats should prefer `PresentationContainer`.
+For more usage examples, refer to the [examples](https://github.com/nilskruthoff/pptx-parser/tree/master/examples) directory.
+
+### PPTX and ODP auto-detection
+
+Use `PresentationContainer` when the input may be either `.pptx` or `.odp`:
+
+```rust
+use pptx_to_md::{ParserConfig, PresentationContainer, PresentationFormat};
+use std::path::Path;
+
+let mut presentation = PresentationContainer::open(
+    Path::new("path/to/presentation.odp"),
+    ParserConfig::default(),
+)?;
+
+assert_eq!(presentation.format(), PresentationFormat::Odp);
+let slides = presentation.parse_all()?;
+# Ok::<(), pptx_to_md::Error>(())
+```
+
+If the format is already known, use `open_as` to skip auto-detection:
+
+```rust
+use pptx_to_md::{ParserConfig, PresentationContainer, PresentationFormat};
+use std::path::Path;
+
+let mut presentation = PresentationContainer::open_as(
+    Path::new("path/to/presentation.pptx"),
+    ParserConfig::default(),
+    PresentationFormat::Pptx,
+)?;
+
+let slides = presentation.parse_all()?;
+# Ok::<(), pptx_to_md::Error>(())
+```
 
 ---
 
@@ -104,6 +144,7 @@ pptx-to-md/
 ├── LICENSE-APACHE
 ├── examples/           # Simple examples to present the usage of this crate
 │   ├── basic_usage.rs
+│   ├── basic_odp_usage.rs
 │   ├── manual_image_extraction.rs
 │   ├── memory_efficient_streaming.rs
 │   ├── performance_tests.rs
@@ -112,6 +153,8 @@ pptx-to-md/
 ├── src/
 │   ├── lib.rs            # Public API
 │   ├── container.rs      # Pptx container handling
+│   ├── presentation.rs   # Format-detecting presentation container
+│   ├── odp.rs            # ODP container handling
 │   ├── parser_config.rs  # Config and config builder
 │   ├── slide.rs          # Individual slide representation & markdown conversion
 │   ├── parse_xml.rs      # XML parsing logic
