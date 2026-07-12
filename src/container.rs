@@ -1,4 +1,7 @@
 ﻿use super::{Result, Slide};
+use crate::constants::{SLIDE_LAYOUT_NAMESPACE, SLIDE_MASTER_NAMESPACE};
+use crate::parse_rels::parse_relationships;
+use crate::parse_xml::{extract_inherited_positions, InheritedPositions};
 use crate::parser_config::ParserConfig;
 use rayon::prelude::*;
 use std::{
@@ -56,7 +59,7 @@ impl PptxContainer {
             }
         }
 
-        slide_paths.sort();
+        sort_slide_paths(&mut slide_paths);
 
         Ok(Self { archive, slide_paths, config, slide_count })
     }
@@ -102,6 +105,7 @@ impl PptxContainer {
             let rels_path = self.get_slide_rels_path(slide_path);
             let rels_data = self.read_file_from_archive(&rels_path).ok();
             let slide_number = Slide::extract_slide_number(slide_path).unwrap_or(0);
+            let inherited_positions = self.resolve_inherited_positions(slide_path, rels_data.as_deref())?;
 
             // Preload images if enabled
             let mut slide_images = Vec::new();
@@ -111,13 +115,13 @@ impl PptxContainer {
                 }
 
                 for img_ref in &slide_images {
-                    let path = PptxContainer::get_full_image_path(slide_path, &img_ref.target);
+                    let path = PptxContainer::resolve_target_path(slide_path, &img_ref.target);
                     let data = self.read_file_from_archive(&path)?;
                     all_image_data.entry(img_ref.target.clone()).or_insert(data);
                 }
             }
 
-            raw_data.push((slide_path.clone(), slide_number, slide_xml, slide_images));
+            raw_data.push((slide_path.clone(), slide_number, slide_xml, slide_images, inherited_positions));
         }
 
         // Share image data atomically across threads
@@ -126,9 +130,9 @@ impl PptxContainer {
         // Parallel processing starts here (CPU-bound tasks)
         let slides: Result<Vec<_>> = raw_data
             .into_par_iter()
-            .map(|(path, number, xml, images)| {
+            .map(|(path, number, xml, images, inherited_positions)| {
                 // Parse XML in parallel (CPU-intensive)
-                let elements = crate::parse_xml::parse_slide_xml(&xml)?;
+                let elements = crate::parse_xml::parse_slide_xml_with_inherited_positions(&xml, &inherited_positions)?;
 
                 // Resolve image data from shared registry
                 let mut image_map = HashMap::new();
@@ -192,7 +196,8 @@ impl PptxContainer {
 
         // parse slide and preload images
         let slide_number = Slide::extract_slide_number(slide_path).unwrap_or(0);
-        let elements = crate::parse_xml::parse_slide_xml(&slide_data)?;
+        let inherited_positions = self.resolve_inherited_positions(slide_path, rels_data.as_deref())?;
+        let elements = crate::parse_xml::parse_slide_xml_with_inherited_positions(&slide_data, &inherited_positions)?;
         
         let mut images = Vec::new();
         let mut image_data = HashMap::new();
@@ -204,7 +209,7 @@ impl PptxContainer {
             }
 
             for img_ref in &images {
-                let img_path = Self::get_full_image_path(slide_path, &img_ref.target);
+                let img_path = Self::resolve_target_path(slide_path, &img_ref.target);
                 if let Ok(data) = self.read_file_from_archive(&img_path) {
                     image_data.insert(img_ref.id.clone(), data);
                 }
@@ -272,14 +277,117 @@ impl PptxContainer {
         rels_path
     }
 
-    pub fn get_full_image_path(slide_path: &str, target: &str) -> String {
-        if target.starts_with("../") {
-            let adjusted_target = target.trim_start_matches("../");
-            format!("ppt/{}", adjusted_target)
+    fn resolve_inherited_positions(
+        &mut self,
+        slide_path: &str,
+        slide_rels_data: Option<&[u8]>,
+    ) -> Result<InheritedPositions> {
+        let Some(slide_rels_data) = slide_rels_data else {
+            return Ok(InheritedPositions::default());
+        };
+
+        let slide_relationships = parse_relationships(slide_rels_data)?;
+        let Some(layout_target) = slide_relationships
+            .iter()
+            .find(|rel| rel.rel_type == SLIDE_LAYOUT_NAMESPACE)
+            .map(|rel| rel.target.as_str()) else {
+            return Ok(InheritedPositions::default());
+        };
+
+        let layout_path = Self::resolve_target_path(slide_path, layout_target);
+        let layout_xml = self.read_file_from_archive(&layout_path)?;
+        let layout_rels_path = self.get_slide_rels_path(&layout_path);
+        let layout_rels_data = self.read_file_from_archive(&layout_rels_path).ok();
+
+        let master_positions = if let Some(layout_rels_data) = layout_rels_data.as_deref() {
+            let layout_relationships = parse_relationships(layout_rels_data)?;
+            if let Some(master_target) = layout_relationships
+                .iter()
+                .find(|rel| rel.rel_type == SLIDE_MASTER_NAMESPACE)
+                .map(|rel| rel.target.as_str()) {
+                let master_path = Self::resolve_target_path(&layout_path, master_target);
+                let master_xml = self.read_file_from_archive(&master_path)?;
+                extract_inherited_positions(&master_xml, &InheritedPositions::default())?
+            } else {
+                InheritedPositions::default()
+            }
         } else {
-            let slide_dir = slide_path.rsplit_once('/').map(|(dir, _)| dir).unwrap_or("");
-            format!("{}/{}", slide_dir, target)
+            InheritedPositions::default()
+        };
+
+        extract_inherited_positions(&layout_xml, &master_positions)
+    }
+
+    pub fn resolve_target_path(base_path: &str, target: &str) -> String {
+        let mut parts: Vec<&str> = if target.starts_with('/') {
+            Vec::new()
+        } else {
+            let mut parts: Vec<&str> = base_path.split('/').collect();
+            let _ = parts.pop();
+            parts
+        };
+
+        for part in target.split('/') {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    let _ = parts.pop();
+                }
+                _ => parts.push(part),
+            }
         }
+
+        parts.join("/")
+    }
+}
+
+fn sort_slide_paths(slide_paths: &mut [String]) {
+    slide_paths.sort_by(|left, right| {
+        Slide::extract_slide_number(left)
+            .cmp(&Slide::extract_slide_number(right))
+            .then_with(|| left.cmp(right))
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sort_slide_paths_numerically() {
+        let mut slide_paths = vec![
+            "ppt/slides/slide10.xml".to_string(),
+            "ppt/slides/slide2.xml".to_string(),
+            "ppt/slides/slide1.xml".to_string(),
+        ];
+
+        sort_slide_paths(&mut slide_paths);
+
+        assert_eq!(slide_paths, vec![
+            "ppt/slides/slide1.xml".to_string(),
+            "ppt/slides/slide2.xml".to_string(),
+            "ppt/slides/slide10.xml".to_string(),
+        ]);
+    }
+
+    #[test]
+    fn test_resolve_target_path_with_parent_segments() {
+        let resolved = PptxContainer::resolve_target_path(
+            "ppt/slides/slide3.xml",
+            "../slideLayouts/slideLayout3.xml",
+        );
+
+        assert_eq!(resolved, "ppt/slideLayouts/slideLayout3.xml");
+    }
+
+    #[test]
+    fn test_resolve_target_path_with_root_relative_target() {
+        let resolved = PptxContainer::resolve_target_path(
+            "ppt/slides/slide3.xml",
+            "/ppt/slideLayouts/slideLayout3.xml",
+        );
+
+        assert_eq!(resolved, "ppt/slideLayouts/slideLayout3.xml");
     }
 }
 
