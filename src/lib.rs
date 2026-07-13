@@ -1,4 +1,5 @@
 mod container;
+mod markdown;
 mod slide;
 mod types;
 mod constants;
@@ -46,7 +47,7 @@ pub enum Error {
     #[error("Conversion was not possible")]
     MultiThreadedConversionFailed,
 
-    #[error("Unbekannter Fehler")]
+    #[error("Unknown Error")]
     Unknown,
 }
 
