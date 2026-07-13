@@ -332,6 +332,90 @@ fn renders_links_in_all_text_markdown_contexts() {
 }
 
 #[test]
+fn escapes_raw_markdown_in_all_text_contexts() {
+    let special = || Run {
+        text: "# *literal* [label] \\ path\nnext".into(),
+        formatting: Formatting::default(),
+        link_target: None,
+    };
+    let mut slide = mock_slide();
+    slide.config = ParserConfig::builder()
+        .include_slide_number_as_comment(false)
+        .include_speaker_notes(true)
+        .include_comments(true)
+        .build();
+    slide.elements = vec![
+        SlideElement::Text(
+            TextElement {
+                runs: vec![special()],
+            },
+            ElementPosition::default(),
+        ),
+        SlideElement::List(
+            ListElement {
+                items: vec![ListItem {
+                    level: 0,
+                    is_ordered: false,
+                    runs: vec![special()],
+                }],
+            },
+            ElementPosition::default(),
+        ),
+        SlideElement::Table(
+            TableElement {
+                rows: vec![TableRow {
+                    cells: vec![TableCell {
+                        runs: vec![special()],
+                    }],
+                }],
+            },
+            ElementPosition::default(),
+        ),
+    ];
+    slide.speaker_notes = vec![TextElement {
+        runs: vec![special()],
+    }];
+    slide.comments = vec![TextElement {
+        runs: vec![special()],
+    }];
+
+    let markdown = slide.convert_to_md().expect("render markdown");
+    assert_eq!(
+        markdown.matches(r"\*literal\* \[label\] \\ path").count(),
+        5
+    );
+    assert_eq!(markdown.matches(r"\# \*literal\*").count(), 4);
+    assert_eq!(markdown.matches("<br>next").count(), 2);
+    assert_eq!(markdown.matches("\\ path\n\nnext").count(), 1);
+    assert_eq!(markdown.matches("\n> next").count(), 2);
+}
+
+#[test]
+fn escapes_table_pipes_without_creating_columns() {
+    let mut slide = mock_slide();
+    slide.config.include_slide_number_as_comment = false;
+    slide.elements = vec![SlideElement::Table(
+        TableElement {
+            rows: vec![TableRow {
+                cells: vec![TableCell {
+                    runs: vec![Run {
+                        text: "left | right\r\nnext".into(),
+                        formatting: Formatting::default(),
+                        link_target: None,
+                    }],
+                }],
+            }],
+        },
+        ElementPosition::default(),
+    )];
+
+    assert_eq!(
+        slide.convert_to_md(),
+        Some("| left \\| right<br>next |\n| --- |\n\n".to_string())
+    );
+}
+
+#[test]
 fn extracts_slide_number_from_path() {
     assert_eq!(
         Slide::extract_slide_number("ppt/slides/slide5.xml"),

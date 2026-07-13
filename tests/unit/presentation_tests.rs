@@ -91,6 +91,11 @@ fn parses_title_and_run_formatting_from_real_pptx() {
     assert!(runs.iter().any(|run| run.text.contains("Italic") && run.formatting.italic));
     assert!(runs.iter().any(|run| run.text.contains("Underlined") && run.formatting.underlined));
     assert!(runs.iter().any(|run| run.text.contains("Bold") && run.formatting.bold && run.formatting.italic));
+
+    let markdown = slides[0].convert_to_md().expect("render first slide");
+    assert!(markdown.contains(
+        "Plain paragraph\n\n**Bold text**\n\n_Italic text_\n\n<u>Underlined text</u>\n\n***Bold and italic text***"
+    ));
 }
 
 #[test]
@@ -118,7 +123,7 @@ fn parses_bulleted_and_numbered_lists_from_real_pptx() {
     }));
 
     let markdown = slides[1].convert_to_md().expect("render list markdown");
-    assert!(markdown.contains("[Link ](https://github.com/nilskruthoff/pptx-parser)[bullet](https://github.com/nilskruthoff/pptx-parser)"));
+    assert!(markdown.contains("[Link bullet](https://github.com/nilskruthoff/pptx-parser)"));
 }
 
 #[test]
