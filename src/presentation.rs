@@ -1,6 +1,6 @@
 use crate::container::SlideIterator;
 use crate::odp::{OdpContainer, OdpSlideIterator};
-use crate::{ParserConfig, PptxContainer, Result, Slide};
+use crate::{ParserConfig, PptxContainer, PresentationMetadata, Result, Slide};
 use std::io::Read;
 use std::path::Path;
 
@@ -57,6 +57,13 @@ impl PresentationContainer {
         self.format
     }
 
+    pub fn metadata(&self) -> &PresentationMetadata {
+        match &self.inner {
+            ContainerInner::Pptx(container) => container.metadata(),
+            ContainerInner::Odp(container) => container.metadata(),
+        }
+    }
+
     pub fn parse_all(&mut self) -> Result<Vec<Slide>> {
         match &mut self.inner {
             ContainerInner::Pptx(container) => container.parse_all(),
@@ -70,6 +77,20 @@ impl PresentationContainer {
             // ODP stores all pages in one content.xml, so there is no independent
             // slide XML to preload as there is for PPTX.
             ContainerInner::Odp(container) => container.parse_all(),
+        }
+    }
+
+    pub fn convert_to_md(&mut self) -> Result<String> {
+        match &mut self.inner {
+            ContainerInner::Pptx(container) => container.convert_to_md(),
+            ContainerInner::Odp(container) => container.convert_to_md(),
+        }
+    }
+
+    pub fn convert_to_md_multi_threaded(&mut self) -> Result<String> {
+        match &mut self.inner {
+            ContainerInner::Pptx(container) => container.convert_to_md_multi_threaded(),
+            ContainerInner::Odp(container) => container.convert_to_md(),
         }
     }
 

@@ -3,6 +3,8 @@ use crate::constants::{COMMENTS_NAMESPACE, NOTES_SLIDE_NAMESPACE, SLIDE_LAYOUT_N
 use crate::parse_rels::{parse_hyperlink_rels, parse_relationships};
 use crate::parse_xml::{extract_inherited_positions, InheritedPositions};
 use crate::parser_config::ParserConfig;
+use crate::metadata::{parse_pptx_metadata, render_presentation_markdown};
+use crate::PresentationMetadata;
 use rayon::prelude::*;
 use std::sync::Arc;
 use std::{collections::HashMap, io::Read, path::Path};
@@ -17,6 +19,7 @@ pub struct PptxContainer {
     archive: zip::ZipArchive<std::fs::File>,
     pub slide_paths: Vec<String>,
     pub slide_count: u32,
+    metadata: PresentationMetadata,
 }
 
 impl PptxContainer {
@@ -61,7 +64,10 @@ impl PptxContainer {
 
         sort_slide_paths(&mut slide_paths);
 
-        Ok(Self { archive, slide_paths, config, slide_count })
+        let core_xml = read_optional_archive_file(&mut archive, "docProps/core.xml")?;
+        let metadata = parse_pptx_metadata(core_xml.as_deref())?;
+
+        Ok(Self { archive, slide_paths, config, slide_count, metadata })
     }
 
     /// Parses the data of all slides for each path present in the containers' `slide_path` vector.
@@ -80,6 +86,20 @@ impl PptxContainer {
         }
 
         Ok(slides)
+    }
+
+    pub fn metadata(&self) -> &PresentationMetadata {
+        &self.metadata
+    }
+
+    pub fn convert_to_md(&mut self) -> Result<String> {
+        let slides = self.parse_all()?;
+        render_presentation_markdown(&self.metadata, self.config.include_presentation_metadata, slides)
+    }
+
+    pub fn convert_to_md_multi_threaded(&mut self) -> Result<String> {
+        let slides = self.parse_all_multi_threaded()?;
+        render_presentation_markdown(&self.metadata, self.config.include_presentation_metadata, slides)
     }
 
     /// Parses all slides in the presentation with optimized multithreaded processing.
@@ -446,6 +466,17 @@ impl PptxContainer {
 
         parts.join("/")
     }
+}
+
+fn read_optional_archive_file(archive: &mut zip::ZipArchive<std::fs::File>, path: &str) -> Result<Option<Vec<u8>>> {
+    let mut file = match archive.by_name(path) {
+        Ok(file) => file,
+        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let mut content = Vec::new();
+    file.read_to_end(&mut content)?;
+    Ok(Some(content))
 }
 
 fn sort_slide_paths(slide_paths: &mut [String]) {
