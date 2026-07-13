@@ -19,6 +19,7 @@ It also supports OpenDocument Presentation (`.odp`).
 - 💾 **Memory Efficient**: Use the streaming API to iterate over one slide at a time, never overloading memory.
 - ⏱️ **Multithreading**: Optional support for multithreaded parsing of PowerPoint slides, with a significant performance increase for larger presentations.
 - ⚙️ **Robust & Safe APIs:** Designed according to Rust best practices with explicit error handling.
+- 🏷️ **Presentation Metadata:** Extracts common document properties from PPTX and ODP.
 - 🪄 **Embedding:** Used to provide pptx content and meta information in a form that is useful for embeddings
 ---
 
@@ -27,14 +28,12 @@ It also supports OpenDocument Presentation (`.odp`).
 `PresentationContainer` is the recommended entry point for new code. It detects whether the input is a PowerPoint (`.pptx`) or OpenDocument Presentation (`.odp`) file and exposes the same parsing API for both formats.
 
 ```rust
-use pptx_to_md::{ImageHandlingMode, ParserConfig, PresentationContainer, SlideElement};
+use pptx_to_md::{ParserConfig, PresentationContainer};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create config instance with the `ParserConfigBuilder` 
-    // this example is equivalent to the `ParseConfig::default()`
     let config = ParserConfig::builder()
-        .extract_images(true)
+        .include_presentation_metadata(true)
         .compress_images(true)
         .quality(80)
         .image_handling_mode(ImageHandlingMode::InMarkdown)
@@ -45,35 +44,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build();
 
     let mut container = PresentationContainer::open(
-        Path::new("path/to/your/presentation.pptx"), // or .odp
+        Path::new("path/to/presentation.pptx"), // or .odp
         config,
     )?;
 
-    println!("Detected format: {:?}", container.format());
-
-    let slides = container.parse_all()?; // or `parse_all_multi_threaded()?`
-
-    for slide in slides {
-        if let Some(md_content) = slide.convert_to_md() {
-            println!("{}", md_content);
-        }
-
-        for element in &slide.elements {
-            match element {
-                SlideElement::Text(text, position) => println!("{:?} at {:?}\n", text, position),
-                SlideElement::Table(table, position) => println!("{:?} at {:?}\n", table, position),
-                SlideElement::Image(image_reference, position) => {
-                    println!("{:?} at {:?}\n", image_reference, position)
-                }
-                SlideElement::List(list, position) => println!("{:?} at {:?}\n", list, position),
-                SlideElement::Unknown => println!("An unknown element was found.\n"),
-            }
-        }
-    }
-
+    let markdown = container.convert_to_md()?;
+    std::fs::write("output.md", markdown)?;
+    
     Ok(())
 }
 ```
+
+`PresentationContainer::convert_to_md()` is the preferred API for converting
+a complete PPTX or ODP document. It emits presentation metadata once at the
+start and then appends all slide Markdown in order. The existing `parse_all()`,
+streaming, and per-slide APIs remain available for structured processing.
+
+To access metadata as structured Rust values without converting slides, see
+[`examples/presentation_metadata.rs`](https://github.com/nilskruthoff/pptx-parser/tree/master/examples/presentation_metadata.rs).
 
 For ODP-specific usage, see [`examples/basic_odp_usage.rs`](https://github.com/nilskruthoff/pptx-parser/tree/master/examples/basic_odp_usage.rs).
 For PPTX-only code, `PptxContainer` remains available for backwards compatibility and for callers that explicitly want the old PowerPoint-only entry point. New code that may handle both formats should prefer `PresentationContainer`.
@@ -127,6 +115,7 @@ let slides = presentation.parse_all()?;
 | `include_slide_number_as_comment`  | `bool`                | `true`        | Weather the slide number comment is included or not (`<!-- Slide [n] -->`)                                | 
 | `include_speaker_notes`  | `bool`                | `false`       | Whether speaker notes are appended to Markdown as blockquotes                                             |
 | `include_comments`       | `bool`                | `false`       | Whether presentation comments are appended to Markdown as blockquotes                                     |
+| `include_presentation_metadata` | `bool`       | `true`        | Whether complete-presentation Markdown starts with a metadata HTML comment                                 |
 <br/>
 
 #### Member of `ImageHandlingMode`
@@ -149,6 +138,7 @@ pptx-to-md/
 ├── examples/           # Simple examples to present the usage of this crate
 │   ├── basic_usage.rs
 │   ├── basic_odp_usage.rs
+│   ├── presentation_metadata.rs
 │   ├── manual_image_extraction.rs
 │   ├── memory_efficient_streaming.rs
 │   ├── performance_tests.rs
