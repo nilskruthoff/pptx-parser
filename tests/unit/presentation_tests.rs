@@ -109,6 +109,16 @@ fn parses_bulleted_and_numbered_lists_from_real_pptx() {
     assert!(list.items.iter().any(|item| list_item_text(item).contains("Nested bullet") && item.level == 1));
     assert!(list.items.iter().any(|item| list_item_text(item).contains("First number") && item.is_ordered));
     assert!(list.items.iter().any(|item| list_item_text(item).contains("Nested number") && item.level == 1 && item.is_ordered));
+    assert!(list.items.iter().any(|item| {
+        list_item_text(item).contains("Link bullet")
+            && item
+                .runs
+                .iter()
+                .all(|run| run.link_target.as_deref() == Some("https://github.com/nilskruthoff/pptx-parser"))
+    }));
+
+    let markdown = slides[1].convert_to_md().expect("render list markdown");
+    assert!(markdown.contains("[Link ](https://github.com/nilskruthoff/pptx-parser)[bullet](https://github.com/nilskruthoff/pptx-parser)"));
 }
 
 #[test]
@@ -128,6 +138,13 @@ fn parses_formatted_table_from_real_pptx() {
     assert_eq!(table.rows[0].cells[0].runs[0].text, "Heading A");
     assert_eq!(table.rows[1].cells[1].runs[0].text, "B1");
     assert_eq!(table.rows[2].cells[2].runs[0].text, "C2");
+    assert_eq!(
+        table.rows[2].cells[2].runs[0].link_target.as_deref(),
+        Some("https://github.com/nilskruthoff/pptx-parser")
+    );
+
+    let markdown = slides[2].convert_to_md().expect("render table markdown");
+    assert!(markdown.contains("[C2](https://github.com/nilskruthoff/pptx-parser)"));
 }
 
 #[test]

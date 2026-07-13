@@ -1,4 +1,4 @@
-﻿use crate::constants::IMAGE_NAMESPACE;
+use crate::constants::IMAGE_NAMESPACE;
 use crate::types::ImageReference;
 use crate::{Error, Result};
 use roxmltree::Document;
@@ -66,11 +66,20 @@ pub fn parse_slide_rels(xml_data: &[u8]) -> Result<Vec<ImageReference>> {
         .collect())
 }
 
+/// Extracts external hyperlink targets keyed by their relationship ID.
+pub fn parse_hyperlink_rels(xml_data: &[u8]) -> Result<std::collections::HashMap<String, String>> {
+    Ok(parse_relationships(xml_data)?
+        .into_iter()
+        .filter(|rel| rel.rel_type == crate::constants::HYPERLINK_NAMESPACE)
+        .map(|rel| (rel.id, rel.target))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::fs;
     use std::path::PathBuf;
-    use super::*;
 
     fn load_xml(filename: &str) -> Vec<u8> {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -100,8 +109,8 @@ mod tests {
                 assert_eq!(normalize_test_string(&images[0].target), normalize_test_string("../media/image1.png"));
                 assert_eq!(images[1].id, "rId2");
                 assert_eq!(normalize_test_string(&images[1].target), normalize_test_string("../media/image2.jpg"));
-            },
-            Err(_) => panic!("Fehler beim Parsen der Slide-Relationships mit Bildern")
+            }
+            Err(_) => panic!("Fehler beim Parsen der Slide-Relationships mit Bildern"),
         }
     }
 
@@ -111,8 +120,20 @@ mod tests {
         match parse_slide_rels(&xml_data) {
             Ok(images) => {
                 assert_eq!(images.len(), 0);
-            },
-            Err(_) => panic!("Fehler beim Parsen der leeren Slide-Relationships")
+            }
+            Err(_) => panic!("Fehler beim Parsen der leeren Slide-Relationships"),
         }
+    }
+
+    #[test]
+    fn parses_hyperlink_relationships() {
+        let xml_data = load_xml("rels_with_images.xml");
+        let hyperlinks = parse_hyperlink_rels(&xml_data).expect("parse hyperlink relationships");
+
+        assert_eq!(
+            hyperlinks.get("rId3"),
+            Some(&"https://example.com".to_string())
+        );
+        assert_eq!(hyperlinks.len(), 1);
     }
 }

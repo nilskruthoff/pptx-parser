@@ -1,15 +1,11 @@
-﻿use super::{Result, Slide};
-use crate::constants::{COMMENTS_NAMESPACE, NOTES_SLIDE_NAMESPACE, SLIDE_LAYOUT_NAMESPACE, SLIDE_MASTER_NAMESPACE};
-use crate::parse_rels::parse_relationships;
+use super::{Result, Slide};
+use crate::constants::{COMMENTS_NAMESPACE, NOTES_SLIDE_NAMESPACE, SLIDE_LAYOUT_NAMESPACE, SLIDE_MASTER_NAMESPACE, };
+use crate::parse_rels::{parse_hyperlink_rels, parse_relationships};
 use crate::parse_xml::{extract_inherited_positions, InheritedPositions};
 use crate::parser_config::ParserConfig;
 use rayon::prelude::*;
-use std::{
-    collections::HashMap,
-    io::Read,
-    path::Path,
-};
 use std::sync::Arc;
+use std::{collections::HashMap, io::Read, path::Path};
 
 /// Holds the internal representation of a loaded PowerPoint (pptx) container.
 ///
@@ -25,12 +21,12 @@ pub struct PptxContainer {
 
 impl PptxContainer {
     /// Opens a PowerPoint pptx file and initializes a `PptxContainer`.
-    /// 
+    ///
     /// _For new code that should support both `.pptx` and `.odp`, prefer
     /// [`PresentationContainer`]. This type remains available for PPTX-only
     /// workflows and backwards compatibility._
     ///
-    /// Processes the given file, extracting its internal files into memory. After initialization, the 
+    /// Processes the given file, extracting its internal files into memory. After initialization, the
     /// container holds slide XML data, relationship files (*.rels), and associated resources.
     ///
     /// # Arguments
@@ -69,7 +65,7 @@ impl PptxContainer {
     }
 
     /// Parses the data of all slides for each path present in the containers' `slide_path` vector.
-    /// 
+    ///
     /// # Note
     /// Parsing is synchronous and in-memory, image data is extracted
     pub fn parse_all(&mut self) -> Result<Vec<Slide>> {
@@ -108,8 +104,14 @@ impl PptxContainer {
             let slide_xml = self.read_file_from_archive(slide_path)?;
             let rels_path = self.get_slide_rels_path(slide_path);
             let rels_data = self.read_file_from_archive(&rels_path).ok();
+            let hyperlinks = rels_data
+                .as_deref()
+                .map(parse_hyperlink_rels)
+                .transpose()?
+                .unwrap_or_default();
             let slide_number = Slide::extract_slide_number(slide_path).unwrap_or(0);
-            let inherited_positions = self.resolve_inherited_positions(slide_path, rels_data.as_deref())?;
+            let inherited_positions =
+                self.resolve_inherited_positions(slide_path, rels_data.as_deref())?;
             let speaker_notes = self.resolve_speaker_notes(slide_path, rels_data.as_deref())?;
             let comments = self.resolve_comments(slide_path, rels_data.as_deref())?;
 
@@ -127,7 +129,16 @@ impl PptxContainer {
                 }
             }
 
-            raw_data.push((slide_path.clone(), slide_number, slide_xml, slide_images, inherited_positions, speaker_notes, comments));
+            raw_data.push((
+                slide_path.clone(),
+                slide_number,
+                slide_xml,
+                slide_images,
+                inherited_positions,
+                speaker_notes,
+                comments,
+                hyperlinks,
+            ));
         }
 
         // Share image data atomically across threads
@@ -136,40 +147,54 @@ impl PptxContainer {
         // Parallel processing starts here (CPU-bound tasks)
         let slides: Result<Vec<_>> = raw_data
             .into_par_iter()
-            .map(|(path, number, xml, images, inherited_positions, speaker_notes, comments)| {
-                // Parse XML in parallel (CPU-intensive)
-                let elements = crate::parse_xml::parse_slide_xml_with_inherited_positions(&xml, &inherited_positions)?;
-
-                // Resolve image data from shared registry
-                let mut image_map = HashMap::new();
-                if config.extract_images {
-                    for img_ref in &images {
-                        if let Some(data) = shared_image_data.get(&img_ref.target) {
-                            image_map.insert(img_ref.id.clone(), data.clone());
-                        }
-                    }
-                }
-
-                // Build slide
-                let mut slide = Slide::new(
+            .map(
+                |(
                     path,
                     number,
-                    elements,
+                    xml,
+                    images,
+                    inherited_positions,
                     speaker_notes,
                     comments,
-                    images,
-                    image_map,
-                    config.clone(),
-                );
-                slide.link_images();
-                Ok(slide)
-            })
+                    hyperlinks,
+                )| {
+                    // Parse XML in parallel (CPU-intensive)
+                    let elements = crate::parse_xml::parse_slide_xml_with_hyperlinks(
+                        &xml,
+                        &inherited_positions,
+                        &hyperlinks,
+                    )?;
+
+                    // Resolve image data from shared registry
+                    let mut image_map = HashMap::new();
+                    if config.extract_images {
+                        for img_ref in &images {
+                            if let Some(data) = shared_image_data.get(&img_ref.target) {
+                                image_map.insert(img_ref.id.clone(), data.clone());
+                            }
+                        }
+                    }
+
+                    // Build slide
+                    let mut slide = Slide::new(
+                        path,
+                        number,
+                        elements,
+                        speaker_notes,
+                        comments,
+                        images,
+                        image_map,
+                        config.clone(),
+                    );
+                    slide.link_images();
+                    Ok(slide)
+                },
+            )
             .collect();
 
         slides
     }
 
-    
     pub fn iter_slides(&mut self) -> SlideIterator<'_> {
         SlideIterator::new(self)
     }
@@ -201,17 +226,27 @@ impl PptxContainer {
         // load relationship file
         let rels_path = self.get_slide_rels_path(slide_path);
         let rels_data = self.read_file_from_archive(&rels_path).ok();
+        let hyperlinks = rels_data
+            .as_deref()
+            .map(parse_hyperlink_rels)
+            .transpose()?
+            .unwrap_or_default();
 
         // parse slide and preload images
         let slide_number = Slide::extract_slide_number(slide_path).unwrap_or(0);
-        let inherited_positions = self.resolve_inherited_positions(slide_path, rels_data.as_deref())?;
+        let inherited_positions =
+            self.resolve_inherited_positions(slide_path, rels_data.as_deref())?;
         let speaker_notes = self.resolve_speaker_notes(slide_path, rels_data.as_deref())?;
         let comments = self.resolve_comments(slide_path, rels_data.as_deref())?;
-        let elements = crate::parse_xml::parse_slide_xml_with_inherited_positions(&slide_data, &inherited_positions)?;
-        
+        let elements = crate::parse_xml::parse_slide_xml_with_hyperlinks(
+            &slide_data,
+            &inherited_positions,
+            &hyperlinks,
+        )?;
+
         let mut images = Vec::new();
         let mut image_data = HashMap::new();
-        
+
         if self.config.extract_images {
             // extract images from relationships
             if let Some(ref rels_bytes) = rels_data {
@@ -225,7 +260,7 @@ impl PptxContainer {
                 }
             }
         }
-        
+
         let config = self.config.clone();
 
         let mut slide = Slide::new(
@@ -302,7 +337,8 @@ impl PptxContainer {
         let Some(layout_target) = slide_relationships
             .iter()
             .find(|rel| rel.rel_type == SLIDE_LAYOUT_NAMESPACE)
-            .map(|rel| rel.target.as_str()) else {
+            .map(|rel| rel.target.as_str())
+        else {
             return Ok(InheritedPositions::default());
         };
 
@@ -316,7 +352,8 @@ impl PptxContainer {
             if let Some(master_target) = layout_relationships
                 .iter()
                 .find(|rel| rel.rel_type == SLIDE_MASTER_NAMESPACE)
-                .map(|rel| rel.target.as_str()) {
+                .map(|rel| rel.target.as_str())
+            {
                 let master_path = Self::resolve_target_path(&layout_path, master_target);
                 let master_xml = self.read_file_from_archive(&master_path)?;
                 extract_inherited_positions(&master_xml, &InheritedPositions::default())?
@@ -342,12 +379,21 @@ impl PptxContainer {
         let Some(notes_target) = relationships
             .iter()
             .find(|rel| rel.rel_type == NOTES_SLIDE_NAMESPACE)
-            .map(|rel| rel.target.as_str()) else {
-                return Ok(Vec::new());
-            };
+            .map(|rel| rel.target.as_str())
+        else {
+            return Ok(Vec::new());
+        };
         let notes_path = Self::resolve_target_path(slide_path, notes_target);
         let notes_xml = self.read_file_from_archive(&notes_path)?;
-        crate::parse_xml::parse_speaker_notes_xml(&notes_xml)
+        let notes_rels = self
+            .read_file_from_archive(&self.get_slide_rels_path(&notes_path))
+            .ok();
+        let hyperlinks = notes_rels
+            .as_deref()
+            .map(parse_hyperlink_rels)
+            .transpose()?
+            .unwrap_or_default();
+        crate::parse_xml::parse_speaker_notes_xml_with_hyperlinks(&notes_xml, &hyperlinks)
     }
 
     fn resolve_comments(
@@ -362,12 +408,21 @@ impl PptxContainer {
         let Some(comment_target) = relationships
             .iter()
             .find(|rel| rel.rel_type == COMMENTS_NAMESPACE || rel.rel_type.ends_with("/comments"))
-            .map(|rel| rel.target.as_str()) else {
-                return Ok(Vec::new());
-            };
+            .map(|rel| rel.target.as_str())
+        else {
+            return Ok(Vec::new());
+        };
         let comment_path = Self::resolve_target_path(slide_path, comment_target);
         let comment_xml = self.read_file_from_archive(&comment_path)?;
-        crate::parse_xml::parse_comments_xml(&comment_xml)
+        let comment_rels = self
+            .read_file_from_archive(&self.get_slide_rels_path(&comment_path))
+            .ok();
+        let hyperlinks = comment_rels
+            .as_deref()
+            .map(parse_hyperlink_rels)
+            .transpose()?
+            .unwrap_or_default();
+        crate::parse_xml::parse_comments_xml_with_hyperlinks(&comment_xml, &hyperlinks)
     }
 
     pub fn resolve_target_path(base_path: &str, target: &str) -> String {
@@ -475,8 +530,7 @@ mod tests {
             .expect("write notes entry");
         archive.finish().expect("finish temporary PPTX");
 
-        let mut container = PptxContainer::open(&path, ParserConfig::default())
-            .expect("open temporary PPTX");
+        let mut container = PptxContainer::open(&path, ParserConfig::default()).expect("open temporary PPTX");
         let slides = container.parse_all().expect("parse temporary PPTX");
         assert_eq!(slides.len(), 1);
         assert_eq!(slides[0].speaker_notes.len(), 1);

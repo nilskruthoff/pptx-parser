@@ -303,10 +303,16 @@ fn parse_speaker_notes(page: Node<'_, '_>, styles: &StyleResolver) -> Result<Vec
 
 fn parse_comments(page: Node<'_, '_>, styles: &StyleResolver) -> Result<Vec<TextElement>> {
     let mut elements = Vec::new();
-    for annotation in page.descendants().filter(|node| {
-        node.is_element() && node.tag_name().name() == "annotation"
-    }) {
-        parse_text_container(annotation, ElementPosition::default(), styles, &mut elements)?;
+    for annotation in page
+        .descendants()
+        .filter(|node| node.is_element() && node.tag_name().name() == "annotation")
+    {
+        parse_text_container(
+            annotation,
+            ElementPosition::default(),
+            styles,
+            &mut elements,
+        )?;
     }
     Ok(elements
         .into_iter()
@@ -379,9 +385,7 @@ fn parse_text_container(
 ) -> Result<()> {
     let paragraphs: Vec<_> = node
         .children()
-        .filter(|child| {
-            is_element(*child, TEXT_NS, "p") || is_element(*child, TEXT_NS, "h")
-        })
+        .filter(|child| is_element(*child, TEXT_NS, "p") || is_element(*child, TEXT_NS, "h"))
         .collect();
     if !paragraphs.is_empty() {
         let mut runs = Vec::new();
@@ -419,7 +423,7 @@ fn parse_paragraph(node: Node<'_, '_>, styles: &StyleResolver) -> Vec<Run> {
         Formatting::default(),
     );
     let mut runs = Vec::new();
-    collect_runs(node, formatting, styles, &mut runs);
+    collect_runs(node, formatting, styles, None, &mut runs);
     runs
 }
 
@@ -427,6 +431,7 @@ fn collect_runs(
     node: Node<'_, '_>,
     formatting: Formatting,
     styles: &StyleResolver,
+    link_target: Option<&str>,
     runs: &mut Vec<Run>,
 ) {
     for child in node.children() {
@@ -435,21 +440,27 @@ fn collect_runs(
                 runs.push(Run {
                     text: text.to_string(),
                     formatting: formatting.clone(),
+                    link_target: link_target.map(str::to_string),
                 });
             }
         } else if is_element(child, TEXT_NS, "span") {
             let next =
                 styles.formatting(child.attribute((TEXT_NS, "style-name")), formatting.clone());
-            collect_runs(child, next, styles, runs);
+            collect_runs(child, next, styles, link_target, runs);
+        } else if is_element(child, TEXT_NS, "a") {
+            let target = child.attribute((XLINK_NS, "href")).or(link_target);
+            collect_runs(child, formatting.clone(), styles, target, runs);
         } else if is_element(child, TEXT_NS, "line-break") {
             runs.push(Run {
                 text: "\n".to_string(),
                 formatting: formatting.clone(),
+                link_target: link_target.map(str::to_string),
             });
         } else if is_element(child, TEXT_NS, "tab") {
             runs.push(Run {
                 text: "\t".to_string(),
                 formatting: formatting.clone(),
+                link_target: link_target.map(str::to_string),
             });
         } else if is_element(child, TEXT_NS, "s") {
             let count = child
@@ -459,6 +470,7 @@ fn collect_runs(
             runs.push(Run {
                 text: " ".repeat(count),
                 formatting: formatting.clone(),
+                link_target: link_target.map(str::to_string),
             });
         }
     }

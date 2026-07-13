@@ -79,6 +79,20 @@
             Err(_) => panic!("Fehler beim Parsen des Runs ohne Formatierung")
         }
     }
+
+    #[test]
+    fn parses_run_hyperlink_target_from_relationships() {
+        let xml = r#"<a:r xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><a:rPr><a:hlinkClick r:id="rId7"/></a:rPr><a:t>Example</a:t></a:r>"#;
+        let doc = Document::parse(xml).expect("parse XML");
+        let hyperlinks = std::collections::HashMap::from([(
+            "rId7".to_string(),
+            "https://example.com".to_string(),
+        )]);
+
+        let run = parse_run_with_hyperlinks(&doc.root_element(), &hyperlinks).expect("parse run");
+        assert_eq!(run.text, "Example");
+        assert_eq!(run.link_target.as_deref(), Some("https://example.com"));
+    }
     
     #[test]
     fn test_parse_run_empty_text() {

@@ -95,6 +95,23 @@ fn parses_heading_from_xml_fixture() {
 }
 
 #[test]
+fn parses_hyperlink_from_odp_text_anchor() {
+    let xml = r#"<text:p xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:xlink="http://www.w3.org/1999/xlink">Before <text:a xlink:href="https://example.com">linked <text:span>text</text:span></text:a></text:p>"#;
+    let document = Document::parse(xml).expect("parse ODP paragraph");
+    let Some(styles) = styles() else {
+        return;
+    };
+
+    let runs = parse_paragraph(document.root_element(), &styles);
+    let linked: String = runs
+        .iter()
+        .filter(|run| run.link_target.as_deref() == Some("https://example.com"))
+        .map(|run| run.text.as_str())
+        .collect();
+    assert_eq!(linked, "linked text");
+}
+
+#[test]
 fn parses_nested_list_from_xml_fixture() {
     let xml = load_odp_xml_or_skip!("list.xml");
     let document = Document::parse(std::str::from_utf8(&xml).unwrap()).unwrap();
@@ -135,7 +152,7 @@ fn parses_complete_content_xml_fixture() {
 
     let elements = parse_page(page, &styles).unwrap();
 
-    assert!(elements.iter().any(|element| matches!(element, SlideElement::Text(_, ElementPosition { x: 360_000, y: 720_000 }))));
+    assert!(elements.iter().any(|element| matches!(element,SlideElement::Text(_, ElementPosition { x: 360_000, y: 720_000 }))));
     assert!(elements.iter().any(|element| matches!(element, SlideElement::List(_, _))));
     assert!(elements.iter().any(|element| matches!(element, SlideElement::Table(_, _))));
 }
@@ -198,11 +215,18 @@ fn parses_bulleted_and_numbered_lists_from_real_odp() {
     assert!(items.iter().any(|item| item.runs.iter().any(|run| run.text.contains("Nested bullet")) && item.level == 1));
     assert!(items.iter().any(|item| item.runs.iter().any(|run| run.text.contains("First number")) && item.is_ordered));
     assert!(items.iter().any(|item| item.runs.iter().any(|run| run.text.contains("Nested number")) && item.level == 1));
+    assert!(items.iter().any(|item| item.runs.iter().any(|run| run.text.contains("Link bullet")
+        && run.link_target.as_deref() == Some("https://github.com/nilskruthoff/pptx-parser"))));
+
+    let markdown = slides[1].convert_to_md().expect("render list markdown");
+    assert!(markdown.contains("[Link bullet](https://github.com/nilskruthoff/pptx-parser)"));
 }
 
 #[test]
 fn parses_formatted_table_and_empty_cells_from_real_odp() {
-    let Some(mut container) = open_real_odp_fixture() else { return; };
+    let Some(mut container) = open_real_odp_fixture() else {
+        return;
+    };
     let slides = container.parse_all().expect("parse ODP fixture");
 
     let table = slides[2]
@@ -222,11 +246,21 @@ fn parses_formatted_table_and_empty_cells_from_real_odp() {
     }
     assert_eq!(table.rows[1].cells[0].runs[0].text, "A1\n");
     assert_eq!(table.rows[2].cells[2].runs[0].text, "C2\n");
+    assert_eq!(
+        table.rows[2].cells[2].runs[0].link_target.as_deref(),
+        Some("https://github.com/nilskruthoff/pptx-parser")
+    );
+
+    let markdown = slides[2].convert_to_md().expect("render table markdown");
+    assert!(markdown.contains("[C2](https://github.com/nilskruthoff/pptx-parser)"));
+    assert!(markdown.contains("| A2 | B2 | [C2](https://github.com/nilskruthoff/pptx-parser) |"));
 }
 
 #[test]
 fn parses_grouped_text_and_keeps_vertical_text_order() {
-    let Some(mut container) = open_real_odp_fixture() else { return; };
+    let Some(mut container) = open_real_odp_fixture() else {
+        return;
+    };
     let slides = container.parse_all().expect("parse ODP fixture");
 
     let grouped_text = text_from_slide(&slides[3]).join("\n");
