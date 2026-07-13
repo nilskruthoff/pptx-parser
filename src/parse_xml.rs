@@ -119,14 +119,19 @@ impl InheritedPositions {
 /// - The function strictly follows Microsoft's Open XML slide schema.
 /// - For best results, ensure input XML data is extracted directly from PPTX files or equivalent sources.
 pub fn parse_slide_xml(xml_data: &[u8]) -> Result<Vec<SlideElement>> {
-    parse_slide_xml_with_inherited_positions(xml_data, &InheritedPositions::default())
+    parse_slide_xml_with_hyperlinks(xml_data, &InheritedPositions::default(), &HashMap::new())
 }
 
 /// Parses the user-authored text from a PPTX notes slide.
 ///
 /// Notes slides also contain placeholders for dates, footers, and slide numbers.
 /// Only the `body` placeholder is speaker-note content and is therefore returned.
+#[cfg(test)]
 pub(crate) fn parse_speaker_notes_xml(xml_data: &[u8]) -> Result<Vec<TextElement>> {
+    parse_speaker_notes_xml_with_hyperlinks(xml_data, &HashMap::new())
+}
+
+pub(crate) fn parse_speaker_notes_xml_with_hyperlinks(xml_data: &[u8], hyperlinks: &HashMap<String, String>) -> Result<Vec<TextElement>> {
     let xml_str = std::str::from_utf8(xml_data).map_err(|_| Error::Unknown)?;
     let doc = Document::parse(xml_str)?;
     let root = doc.root_element();
@@ -153,7 +158,7 @@ pub(crate) fn parse_speaker_notes_xml(xml_data: &[u8]) -> Result<Vec<TextElement
                 && node.tag_name().name() == "txBody"
                 && node.tag_name().namespace() == Some(P_NAMESPACE)
         }) {
-            let text = parse_text(&text_body)?;
+            let text = parse_text_with_hyperlinks(&text_body, hyperlinks)?;
             if !text.runs.is_empty() {
                 notes.push(text);
             }
@@ -163,15 +168,19 @@ pub(crate) fn parse_speaker_notes_xml(xml_data: &[u8]) -> Result<Vec<TextElement
 }
 
 /// Parses text content from both legacy and modern PPTX comment parts.
-pub(crate) fn parse_comments_xml(xml_data: &[u8]) -> Result<Vec<TextElement>> {
+pub(crate) fn parse_comments_xml_with_hyperlinks(
+    xml_data: &[u8],
+    hyperlinks: &HashMap<String, String>,
+) -> Result<Vec<TextElement>> {
     let xml_str = std::str::from_utf8(xml_data).map_err(|_| Error::Unknown)?;
     let doc = Document::parse(xml_str)?;
     let mut comments = Vec::new();
 
-    for text_body in doc.descendants().filter(|node| {
-        node.is_element() && node.tag_name().name() == "txBody"
-    }) {
-        let text = parse_text(&text_body)?;
+    for text_body in doc
+        .descendants()
+        .filter(|node| node.is_element() && node.tag_name().name() == "txBody")
+    {
+        let text = parse_text_with_hyperlinks(&text_body, hyperlinks)?;
         if !text.runs.is_empty() {
             comments.push(text);
         }
@@ -186,7 +195,11 @@ pub(crate) fn parse_comments_xml(xml_data: &[u8]) -> Result<Vec<TextElement>> {
             let content = text.text().unwrap_or_default();
             if !content.is_empty() {
                 comments.push(TextElement {
-                    runs: vec![Run { text: format!("{}\n", content), formatting: Formatting::default() }],
+                    runs: vec![Run {
+                        text: format!("{}\n", content),
+                        formatting: Formatting::default(),
+                        link_target: None,
+                    }],
                 });
             }
         }
@@ -209,6 +222,15 @@ pub fn parse_slide_xml_with_inherited_positions(
     xml_data: &[u8],
     inherited_positions: &InheritedPositions,
 ) -> Result<Vec<SlideElement>> {
+    parse_slide_xml_with_hyperlinks(xml_data, inherited_positions, &HashMap::new())
+}
+
+/// Parses slide XML while resolving text-run hyperlink relationship IDs.
+pub fn parse_slide_xml_with_hyperlinks(
+    xml_data: &[u8],
+    inherited_positions: &InheritedPositions,
+    hyperlinks: &HashMap<String, String>,
+) -> Result<Vec<SlideElement>> {
     let xml_str = std::str::from_utf8(xml_data).map_err(|_| Error::Unknown)?;
     let doc = Document::parse(xml_str)?;
     let root = doc.root_element();
@@ -217,16 +239,23 @@ pub fn parse_slide_xml_with_inherited_positions(
     let c_sld = root
         .descendants()
         .find(|n| n.tag_name().name() == "cSld" && n.tag_name().namespace() == ns)
-        .ok_or(format!("No <p:cSld> tag was found for: {:?}", ns)).map_err(|_| Error::Unknown)?;
+        .ok_or(format!("No <p:cSld> tag was found for: {:?}", ns))
+        .map_err(|_| Error::Unknown)?;
 
     let sp_tree = c_sld
         .children()
         .find(|n| n.tag_name().name() == "spTree" && n.tag_name().namespace() == ns)
-        .ok_or(format!("No <p:spTree> tag was found for: {:?}", ns)).map_err(|_| Error::Unknown)?;
+        .ok_or(format!("No <p:spTree> tag was found for: {:?}", ns))
+        .map_err(|_| Error::Unknown)?;
 
     let mut elements = Vec::new();
     for child_node in sp_tree.children().filter(|n| n.is_element()) {
-        elements.extend(parse_group(&child_node, CoordinateTransform::identity(), inherited_positions)?);
+        elements.extend(parse_group(
+            &child_node,
+            CoordinateTransform::identity(),
+            inherited_positions,
+            hyperlinks,
+        )?);
     }
 
     Ok(elements)
@@ -236,7 +265,12 @@ pub fn parse_slide_xml_with_inherited_positions(
 ///
 /// The `transform` argument carries the accumulated group transformation so elements
 /// inside nested `<p:grpSp>` containers can be positioned in slide coordinates.
-fn parse_group(node: &Node, transform: CoordinateTransform, inherited_positions: &InheritedPositions) -> Result<Vec<SlideElement>> {
+fn parse_group(
+    node: &Node,
+    transform: CoordinateTransform,
+    inherited_positions: &InheritedPositions,
+    hyperlinks: &HashMap<String, String>,
+) -> Result<Vec<SlideElement>> {
     let mut elements = Vec::new();
 
     let tag_name = node.tag_name().name();
@@ -249,27 +283,30 @@ fn parse_group(node: &Node, transform: CoordinateTransform, inherited_positions:
     let position = extract_position(node, transform, inherited_positions);
 
     match tag_name {
-        "sp" => {
-            match parse_sp(node)? {
-                ParsedContent::Text(text) => elements.push(SlideElement::Text(text, position)),
-                ParsedContent::List(list) => elements.push(SlideElement::List(list, position)),
-            }
+        "sp" => match parse_sp(node, hyperlinks)? {
+            ParsedContent::Text(text) => elements.push(SlideElement::Text(text, position)),
+            ParsedContent::List(list) => elements.push(SlideElement::List(list, position)),
         },
         "graphicFrame" => {
-            if let Some(graphic_element) = parse_graphic_frame(&node)? {
+            if let Some(graphic_element) = parse_graphic_frame_with_hyperlinks(&node, hyperlinks)? {
                 elements.push(SlideElement::Table(graphic_element, position));
             }
-        },
+        }
         "pic" => {
             let image_reference = parse_pic(&node)?;
             elements.push(SlideElement::Image(image_reference, position));
-        },
+        }
         "grpSp" => {
             let child_transform = transform.then(extract_group_transform(node));
             for child in node.children().filter(|n| n.is_element()) {
-                elements.extend(parse_group(&child, child_transform, inherited_positions)?);
+                elements.extend(parse_group(
+                    &child,
+                    child_transform,
+                    inherited_positions,
+                    hyperlinks,
+                )?);
             }
-        },
+        }
         _ => elements.push(SlideElement::Unknown),
     }
 
@@ -278,8 +315,9 @@ fn parse_group(node: &Node, transform: CoordinateTransform, inherited_positions:
 
 /// Parses the text body node (`<p:txBody>`) ito search for shape nodes (`<a:sp>`) and
 /// evaluates if a shape is a formatted list or a common text
-fn parse_sp(sp_node: &Node) -> Result<ParsedContent> {
-    let tx_body_node = sp_node.children()
+fn parse_sp(sp_node: &Node, hyperlinks: &HashMap<String, String>) -> Result<ParsedContent> {
+    let tx_body_node = sp_node
+        .children()
         .find(|n| n.tag_name().name() == "txBody" && n.tag_name().namespace() == Some(P_NAMESPACE))
         .ok_or(Error::Unknown)?;
 
@@ -287,21 +325,24 @@ fn parse_sp(sp_node: &Node) -> Result<ParsedContent> {
         n.is_element()
             && n.tag_name().name() == "pPr"
             && n.tag_name().namespace() == Some(A_NAMESPACE)
-            && (
-            n.attribute("lvl").is_some() ||
-                n.children().any(|child| {
-                    child.is_element() && (
-                        child.tag_name().name() == "buAutoNum" ||
-                            child.tag_name().name() == "buChar"
-                    )
-                })
-        )
+            && (n.attribute("lvl").is_some()
+                || n.children().any(|child| {
+                    child.is_element()
+                        && (child.tag_name().name() == "buAutoNum"
+                            || child.tag_name().name() == "buChar")
+                }))
     });
 
     if is_list {
-        Ok(ParsedContent::List(parse_list(&tx_body_node)?))
+        Ok(ParsedContent::List(parse_list_with_hyperlinks(
+            &tx_body_node,
+            hyperlinks,
+        )?))
     } else {
-        Ok(ParsedContent::Text(parse_text(&tx_body_node)?))
+        Ok(ParsedContent::Text(parse_text_with_hyperlinks(
+            &tx_body_node,
+            hyperlinks,
+        )?))
     }
 }
 
@@ -310,7 +351,15 @@ fn parse_sp(sp_node: &Node) -> Result<ParsedContent> {
 /// Returns a `Result` containing either:
 /// - `SlideElement::Text`: A text element containing all text runs
 /// - `Error`: Error information encapsulated in [`crate::Error`] if parsing fails at XML parsing level.
+#[cfg(test)]
 fn parse_text(tx_body_node: &Node) -> Result<TextElement> {
+    parse_text_with_hyperlinks(tx_body_node, &HashMap::new())
+}
+
+fn parse_text_with_hyperlinks(
+    tx_body_node: &Node,
+    hyperlinks: &HashMap<String, String>,
+) -> Result<TextElement> {
     let mut runs = Vec::new();
 
     for p_node in tx_body_node.children().filter(|n| {
@@ -318,29 +367,36 @@ fn parse_text(tx_body_node: &Node) -> Result<TextElement> {
             && n.tag_name().name() == "p"
             && n.tag_name().namespace() == Some(A_NAMESPACE)
     }) {
-        let mut paragraph_runs = parse_paragraph(&p_node, true)?;
+        let mut paragraph_runs = parse_paragraph_with_hyperlinks(&p_node, true, hyperlinks)?;
         runs.append(&mut paragraph_runs);
     }
 
     Ok(TextElement { runs })
 }
 
+#[cfg(test)]
 fn parse_graphic_frame(node: &Node) -> Result<Option<TableElement>> {
-    let graphic_data_node = node
-        .descendants()
-        .find(|n| {
-            n.is_element()
-                && n.tag_name().name() == "graphicData"
-                && n.tag_name().namespace() == Some(A_NAMESPACE)
-                && n.attribute("uri") == Some("http://schemas.openxmlformats.org/drawingml/2006/table")
-        });
+    parse_graphic_frame_with_hyperlinks(node, &HashMap::new())
+}
+
+fn parse_graphic_frame_with_hyperlinks(
+    node: &Node,
+    hyperlinks: &HashMap<String, String>,
+) -> Result<Option<TableElement>> {
+    let graphic_data_node = node.descendants().find(|n| {
+        n.is_element()
+            && n.tag_name().name() == "graphicData"
+            && n.tag_name().namespace() == Some(A_NAMESPACE)
+            && n.attribute("uri") == Some("http://schemas.openxmlformats.org/drawingml/2006/table")
+    });
 
     if let Some(graphic_data) = graphic_data_node {
-        if let Some(tbl_node) = graphic_data
-            .children()
-            .find(|n| n.is_element() && n.tag_name().name() == "tbl" && n.tag_name().namespace() == Some(A_NAMESPACE))
-        {
-            let table = parse_table(&tbl_node)?;
+        if let Some(tbl_node) = graphic_data.children().find(|n| {
+            n.is_element()
+                && n.tag_name().name() == "tbl"
+                && n.tag_name().namespace() == Some(A_NAMESPACE)
+        }) {
+            let table = parse_table_with_hyperlinks(&tbl_node, hyperlinks)?;
             return Ok(Some(table));
         }
     }
@@ -350,7 +406,12 @@ fn parse_graphic_frame(node: &Node) -> Result<Option<TableElement>> {
 
 /// Parses a table node (`<a:tbl>`) and extracts all
 /// table rows ('<a:tr>') elements to construct a `TableElement`.
+#[cfg(test)]
 fn parse_table(tbl_node: &Node) -> Result<TableElement> {
+    parse_table_with_hyperlinks(tbl_node, &HashMap::new())
+}
+
+fn parse_table_with_hyperlinks(tbl_node: &Node, hyperlinks: &HashMap<String, String>) -> Result<TableElement> {
     let mut rows = Vec::new();
 
     for tr_node in tbl_node.children().filter(|n| {
@@ -358,7 +419,7 @@ fn parse_table(tbl_node: &Node) -> Result<TableElement> {
             && n.tag_name().name() == "tr"
             && n.tag_name().namespace() == Some(A_NAMESPACE)
     }) {
-        let row = parse_table_row(&tr_node)?;
+        let row = parse_table_row_with_hyperlinks(&tr_node, hyperlinks)?;
         rows.push(row);
     }
 
@@ -367,7 +428,12 @@ fn parse_table(tbl_node: &Node) -> Result<TableElement> {
 
 /// Parses a table row node (`'<a:tr>'`) and extracts all
 /// table cells ('<a:tc>') elements to construct a full `TableRow`.
+#[cfg(test)]
 fn parse_table_row(tr_node: &Node) -> Result<TableRow> {
+    parse_table_row_with_hyperlinks(tr_node, &HashMap::new())
+}
+
+fn parse_table_row_with_hyperlinks(tr_node: &Node, hyperlinks: &HashMap<String, String>, ) -> Result<TableRow> {
     let mut cells = Vec::new();
 
     for tc_node in tr_node.children().filter(|n| {
@@ -375,7 +441,7 @@ fn parse_table_row(tr_node: &Node) -> Result<TableRow> {
             && n.tag_name().name() == "tc"
             && n.tag_name().namespace() == Some(A_NAMESPACE)
     }) {
-        let cell = parse_table_cell(&tc_node)?;
+        let cell = parse_table_cell_with_hyperlinks(&tc_node, hyperlinks)?;
         cells.push(cell);
     }
 
@@ -384,7 +450,12 @@ fn parse_table_row(tr_node: &Node) -> Result<TableRow> {
 
 /// Parses a table cell node (`'<a:tc>'`) and extracts all
 /// paragraph nodes ('<a:p>') to construct a `TableCell`.
+#[cfg(test)]
 fn parse_table_cell(tc_node: &Node) -> Result<TableCell> {
+    parse_table_cell_with_hyperlinks(tc_node, &HashMap::new())
+}
+
+fn parse_table_cell_with_hyperlinks(tc_node: &Node, hyperlinks: &HashMap<String, String>, ) -> Result<TableCell> {
     let mut runs = Vec::new();
 
     if let Some(tx_body_node) = tc_node.children().find(|n| {
@@ -397,7 +468,7 @@ fn parse_table_cell(tc_node: &Node) -> Result<TableCell> {
                 && n.tag_name().name() == "p"
                 && n.tag_name().namespace() == Some(A_NAMESPACE)
         }) {
-            let mut paragraph_runs = parse_paragraph(&p_node, false)?;
+            let mut paragraph_runs = parse_paragraph_with_hyperlinks(&p_node, false, hyperlinks)?;
             runs.append(&mut paragraph_runs);
         }
     }
@@ -419,10 +490,15 @@ fn parse_table_cell(tc_node: &Node) -> Result<TableCell> {
 fn parse_pic(pic_node: &Node) -> Result<ImageReference> {
     let blip_node = pic_node
         .descendants()
-        .find(|n| n.is_element() && n.tag_name().name() == "blip" && n.tag_name().namespace() == Some(A_NAMESPACE))
+        .find(|n| {
+            n.is_element()
+                && n.tag_name().name() == "blip"
+                && n.tag_name().namespace() == Some(A_NAMESPACE)
+        })
         .ok_or(Error::ImageNotFound)?;
 
-    let embed_attr = blip_node.attribute((RELS_NAMESPACE, "embed"))
+    let embed_attr = blip_node
+        .attribute((RELS_NAMESPACE, "embed"))
         .or_else(|| blip_node.attribute("r:embed"))
         .ok_or(Error::ImageNotFound)?;
 
@@ -440,7 +516,12 @@ fn parse_pic(pic_node: &Node) -> Result<ImageReference> {
 /// # Returns
 /// - `SlideElement::List`: A complete lists with all children of type `ListElement`
 /// - `Error`: Error information encapsulated in [`crate::Error`] if parsing fails at XML parsing level.
+#[cfg(test)]
 fn parse_list(tx_body_node: &Node) -> Result<ListElement> {
+    parse_list_with_hyperlinks(tx_body_node, &HashMap::new())
+}
+
+fn parse_list_with_hyperlinks(tx_body_node: &Node, hyperlinks: &HashMap<String, String>, ) -> Result<ListElement> {
     let mut items = Vec::new();
 
     for p_node in tx_body_node.children().filter(|n| {
@@ -450,9 +531,9 @@ fn parse_list(tx_body_node: &Node) -> Result<ListElement> {
     }) {
         let (level, is_ordered) = parse_list_properties(&p_node)?;
 
-        let runs = parse_paragraph(&p_node, true)?;
+        let runs = parse_paragraph_with_hyperlinks(&p_node, true, hyperlinks)?;
 
-        items.push(ListItem { level, is_ordered, runs });
+        items.push(ListItem { level, is_ordered, runs, });
     }
 
     Ok(ListElement { items })
@@ -482,12 +563,16 @@ fn parse_list_properties(p_node: &Node) -> Result<(u32, bool)> {
         }
 
         is_ordered = p_pr_node.children().any(|n| {
-            n.is_element() && n.tag_name().namespace() == Some(A_NAMESPACE) && n.tag_name().name() == "buAutoNum"
+            n.is_element()
+                && n.tag_name().namespace() == Some(A_NAMESPACE)
+                && n.tag_name().name() == "buAutoNum"
         });
 
         if !is_ordered {
             is_ordered = p_pr_node.children().any(|n| {
-                n.is_element() && n.tag_name().namespace() == Some(A_NAMESPACE) && n.tag_name().name() == "buChar"
+                n.is_element()
+                    && n.tag_name().namespace() == Some(A_NAMESPACE)
+                    && n.tag_name().name() == "buChar"
             });
         }
     }
@@ -499,19 +584,31 @@ fn parse_list_properties(p_node: &Node) -> Result<(u32, bool)> {
 ///
 /// # Notes
 /// Searches for the last run and adds a newline character
+#[cfg(test)]
 fn parse_paragraph(p_node: &Node, add_new_line: bool) -> Result<Vec<Run>> {
-    let run_nodes: Vec<_> = p_node.children().filter(|n| {
-        n.is_element()
-            && n.tag_name().name() == "r"
-            && n.tag_name().namespace() == Some(A_NAMESPACE)
-    }).collect();
+    parse_paragraph_with_hyperlinks(p_node, add_new_line, &HashMap::new())
+}
+
+fn parse_paragraph_with_hyperlinks(
+    p_node: &Node,
+    add_new_line: bool,
+    hyperlinks: &HashMap<String, String>,
+) -> Result<Vec<Run>> {
+    let run_nodes: Vec<_> = p_node
+        .children()
+        .filter(|n| {
+            n.is_element()
+                && n.tag_name().name() == "r"
+                && n.tag_name().namespace() == Some(A_NAMESPACE)
+        })
+        .collect();
 
     let count = run_nodes.len();
     let mut runs: Vec<Run> = Vec::new();
 
     for (idx, r_node) in run_nodes.iter().enumerate() {
-        let mut run = parse_run(r_node)?;
-        
+        let mut run = parse_run_with_hyperlinks(r_node, hyperlinks)?;
+
         if add_new_line && idx == count - 1 {
             run.text.push('\n');
         }
@@ -523,7 +620,12 @@ fn parse_paragraph(p_node: &Node, add_new_line: bool) -> Result<Vec<Run>> {
 
 /// Parses a single run properties node (`<a:rPr>`) and extracting the text content from the text node (`<a:t>`)
 /// as well as the format including _bold_, _italic_, _underlined_ and the _language_
+#[cfg(test)]
 fn parse_run(r_node: &Node) -> Result<Run> {
+    parse_run_with_hyperlinks(r_node, &HashMap::new())
+}
+
+fn parse_run_with_hyperlinks(r_node: &Node, hyperlinks: &HashMap<String, String>) -> Result<Run> {
     let mut text = String::new();
     let mut formatting = Formatting::default();
 
@@ -555,7 +657,28 @@ fn parse_run(r_node: &Node) -> Result<Run> {
             text.push_str(t);
         }
     }
-    Ok(Run { text, formatting })
+    let link_target = r_node
+        .children()
+        .find(|n| {
+            n.is_element()
+                && n.tag_name().name() == "rPr"
+                && n.tag_name().namespace() == Some(A_NAMESPACE)
+        })
+        .and_then(|r_pr| {
+            r_pr.children().find(|n| {
+                n.is_element()
+                    && n.tag_name().name() == "hlinkClick"
+                    && n.tag_name().namespace() == Some(A_NAMESPACE)
+            })
+        })
+        .and_then(|link| {
+            link.attribute((RELS_NAMESPACE, "id"))
+                .or_else(|| link.attribute("r:id"))
+        })
+        .and_then(|id| hyperlinks.get(id))
+        .cloned();
+
+    Ok(Run { text, formatting, link_target})
 }
 
 /// Extracts the effective slide position for a node.
@@ -578,21 +701,35 @@ fn extract_raw_position(node: &Node) -> Option<ElementPosition> {
     let xfrm = match node.tag_name().name() {
         "sp" | "pic" => node
             .children()
-            .find(|n| n.is_element() && n.tag_name().name() == "spPr" && n.tag_name().namespace() == Some(P_NAMESPACE))
+            .find(|n| {
+                n.is_element()
+                    && n.tag_name().name() == "spPr"
+                    && n.tag_name().namespace() == Some(P_NAMESPACE)
+            })
             .and_then(|sp_pr| {
                 sp_pr.children().find(|n| {
-                    n.is_element() && n.tag_name().name() == "xfrm" && n.tag_name().namespace() == Some(A_NAMESPACE)
+                    n.is_element()
+                        && n.tag_name().name() == "xfrm"
+                        && n.tag_name().namespace() == Some(A_NAMESPACE)
                 })
             }),
         "graphicFrame" => node.children().find(|n| {
-            n.is_element() && n.tag_name().name() == "xfrm" && n.tag_name().namespace() == Some(P_NAMESPACE)
+            n.is_element()
+                && n.tag_name().name() == "xfrm"
+                && n.tag_name().namespace() == Some(P_NAMESPACE)
         }),
         "grpSp" => node
             .children()
-            .find(|n| n.is_element() && n.tag_name().name() == "grpSpPr" && n.tag_name().namespace() == Some(P_NAMESPACE))
+            .find(|n| {
+                n.is_element()
+                    && n.tag_name().name() == "grpSpPr"
+                    && n.tag_name().namespace() == Some(P_NAMESPACE)
+            })
             .and_then(|grp_sp_pr| {
                 grp_sp_pr.children().find(|n| {
-                    n.is_element() && n.tag_name().name() == "xfrm" && n.tag_name().namespace() == Some(A_NAMESPACE)
+                    n.is_element()
+                        && n.tag_name().name() == "xfrm"
+                        && n.tag_name().namespace() == Some(A_NAMESPACE)
                 })
             }),
         _ => None,
@@ -613,10 +750,16 @@ fn extract_raw_position(node: &Node) -> Option<ElementPosition> {
 fn extract_group_transform(node: &Node) -> CoordinateTransform {
     let Some(xfrm) = node
         .children()
-        .find(|n| n.is_element() && n.tag_name().name() == "grpSpPr" && n.tag_name().namespace() == Some(P_NAMESPACE))
+        .find(|n| {
+            n.is_element()
+                && n.tag_name().name() == "grpSpPr"
+                && n.tag_name().namespace() == Some(P_NAMESPACE)
+        })
         .and_then(|grp_sp_pr| {
             grp_sp_pr.children().find(|n| {
-                n.is_element() && n.tag_name().name() == "xfrm" && n.tag_name().namespace() == Some(A_NAMESPACE)
+                n.is_element()
+                    && n.tag_name().name() == "xfrm"
+                    && n.tag_name().namespace() == Some(A_NAMESPACE)
             })
         }) else {
         return CoordinateTransform::identity();
@@ -643,17 +786,23 @@ fn extract_group_transform(node: &Node) -> CoordinateTransform {
 }
 
 /// Reads an integer attribute from a direct child node with the given namespace and tag name.
-fn extract_child_attr_i64(node: &Node, namespace: &str, child_name: &str, attr_name: &str) -> Option<i64> {
+fn extract_child_attr_i64(node: &Node, namespace: &str, child_name: &str, attr_name: &str, ) -> Option<i64> {
     node.children()
-        .find(|n| n.is_element() && n.tag_name().name() == child_name && n.tag_name().namespace() == Some(namespace))
+        .find(|n| {
+            n.is_element()
+                && n.tag_name().name() == child_name
+                && n.tag_name().namespace() == Some(namespace)
+        })
         .and_then(|child| child.attribute(attr_name))
         .and_then(|value| value.parse::<i64>().ok())
 }
 
 fn extract_placeholder_key(node: &Node) -> Option<PlaceholderKey> {
-    let placeholder = node
-        .descendants()
-        .find(|n| n.is_element() && n.tag_name().name() == "ph" && n.tag_name().namespace() == Some(P_NAMESPACE))?;
+    let placeholder = node.descendants().find(|n| {
+        n.is_element()
+            && n.tag_name().name() == "ph"
+            && n.tag_name().namespace() == Some(P_NAMESPACE)
+    })?;
 
     Some(PlaceholderKey {
         kind: placeholder.attribute("type").map(|value| value.to_string()),
@@ -680,7 +829,7 @@ pub fn extract_inherited_positions(
 
     let sp_tree = c_sld
         .children()
-        .find(|n| n.tag_name().name() == "spTree" && n.tag_name().namespace() == root.tag_name().namespace())
+        .find(|n| { n.tag_name().name() == "spTree" && n.tag_name().namespace() == root.tag_name().namespace()})
         .ok_or(Error::Unknown)?;
 
     let mut positions = inherited_positions.positions.clone();
@@ -729,7 +878,6 @@ fn insert_placeholder_position(
 
     positions.insert(key, position);
 }
-
 
 #[cfg(test)]
 #[path = "../tests/unit/parse_xml_tests.rs"]
