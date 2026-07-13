@@ -1,5 +1,5 @@
-﻿use crate::parser_config::ImageHandlingMode;
-use crate::{ElementPosition, ImageReference, ParserConfig, SlideElement};
+use crate::parser_config::ImageHandlingMode;
+use crate::{ElementPosition, ImageReference, ParserConfig, Run, SlideElement};
 use base64::{engine::general_purpose, Engine as _};
 use image::ImageOutputFormat;
 use std::collections::HashMap;
@@ -39,7 +39,7 @@ pub struct Slide {
     pub comments: Vec<crate::TextElement>,
     pub images: Vec<ImageReference>,
     pub image_data: HashMap<String, Vec<u8>>,
-    pub config: ParserConfig
+    pub config: ParserConfig,
 }
 
 impl Slide {
@@ -77,7 +77,9 @@ impl Slide {
     /// - `None`: If a conversion error occurs during image encoding.
     pub fn convert_to_md(&self) -> Option<String> {
         let mut slide_txt = String::new();
-        if self.config.include_slide_number_as_comment { slide_txt.push_str(format!("<!-- Slide {} -->\n\n", self.slide_number).as_str()); }
+        if self.config.include_slide_number_as_comment {
+            slide_txt.push_str(format!("<!-- Slide {} -->\n\n", self.slide_number).as_str());
+        }
         let mut image_count = 0;
 
         let mut sorted_elements = self.elements.clone();
@@ -85,7 +87,7 @@ impl Slide {
             let ElementPosition { y, x } = element.position();
             (y, x)
         });
-        
+
         for element in sorted_elements {
             match element {
                 SlideElement::Text(text, _pos) => {
@@ -93,16 +95,20 @@ impl Slide {
                         slide_txt.push_str(&run.render_as_md());
                     }
                     slide_txt.push('\n');
-                },
+                }
                 SlideElement::Table(table, _pos) => {
                     let mut is_header = true;
                     for row in &table.rows {
                         let mut row_texts = Vec::new();
                         for cell in &row.cells {
-                            let mut cell_text = String::new();
-                            for run in &cell.runs {
-                                cell_text.push_str(&run.extract());
-                            }
+                            let cell_text = cell
+                                .runs
+                                .iter()
+                                .map(Run::render_as_md)
+                                .collect::<String>();
+                            let cell_text = cell_text
+                                .trim_end_matches('\n')
+                                .replace('\n', "<br>");
                             row_texts.push(cell_text);
                         }
 
@@ -111,19 +117,28 @@ impl Slide {
                         slide_txt.push('\n');
 
                         if is_header {
-                            let separator_line = format!("|{}|", row_texts.iter().map(|_| " --- ").collect::<Vec<_>>().join("|"));
+                            let separator_line = format!(
+                                "|{}|",
+                                row_texts
+                                    .iter()
+                                    .map(|_| " --- ")
+                                    .collect::<Vec<_>>()
+                                    .join("|")
+                            );
                             slide_txt.push_str(&separator_line);
                             slide_txt.push('\n');
                             is_header = false;
                         }
                     }
                     slide_txt.push('\n');
-                },
+                }
                 SlideElement::Image(image_ref, _pos) => {
                     match self.config.image_handling_mode {
                         ImageHandlingMode::InMarkdown => {
                             if let Some(image_data) = self.image_data.get(&image_ref.id) {
-                                let image_data = self.config.compress_images
+                                let image_data = self
+                                    .config
+                                    .compress_images
                                     .then(|| self.compress_image(image_data))
                                     .unwrap_or_else(|| Option::from(image_data.clone()));
 
@@ -131,20 +146,33 @@ impl Slide {
                                 let image_name = &image_ref.target.split('/').last()?;
                                 let file_ext = &image_name.split('.').last()?;
 
-                                slide_txt.push_str(format!("![{}](data:image/{};base64,{})", image_name, file_ext, base64_string).as_str());
+                                slide_txt.push_str(
+                                    format!(
+                                        "![{}](data:image/{};base64,{})",
+                                        image_name, file_ext, base64_string
+                                    )
+                                    .as_str(),
+                                );
                             }
                         }
                         ImageHandlingMode::Save => {
                             if let Some(image_data) = self.image_data.get(&image_ref.id) {
-                                let image_data = self.config.compress_images
+                                let image_data = self
+                                    .config
+                                    .compress_images
                                     .then(|| self.compress_image(image_data))
                                     .unwrap_or_else(|| Option::from(image_data.clone()));
 
-                                let ext = self.config.compress_images
+                                let ext = self
+                                    .config
+                                    .compress_images
                                     .then(|| "jpg".to_string())
-                                    .unwrap_or_else(|| self.get_image_extension(&image_ref.target.clone()));
+                                    .unwrap_or_else(|| {
+                                        self.get_image_extension(&image_ref.target.clone())
+                                    });
 
-                                let output_dir = self.config
+                                let output_dir = self
+                                    .config
                                     .image_output_path
                                     .clone()
                                     .unwrap_or_else(|| PathBuf::from("."));
@@ -152,7 +180,13 @@ impl Slide {
                                 let _ = fs::create_dir_all(&output_dir);
 
                                 let mut image_path = output_dir.clone();
-                                let file_name = format!("slide{}_image{}_{}.{}", self.slide_number, image_count + 1, &image_ref.id, ext);
+                                let file_name = format!(
+                                    "slide{}_image{}_{}.{}",
+                                    self.slide_number,
+                                    image_count + 1,
+                                    &image_ref.id,
+                                    ext
+                                );
                                 image_path.push(&file_name);
 
                                 let _ = fs::write(&image_path, image_data?);
@@ -175,7 +209,7 @@ impl Slide {
                     for item in &list_element.items {
                         let mut item_text = String::new();
                         for run in &item.runs {
-                            item_text.push_str(&run.extract());
+                            item_text.push_str(&run.render_as_md());
                         }
 
                         let level = item.level as usize;
@@ -201,8 +235,8 @@ impl Slide {
 
                         slide_txt.push_str(&format!("{}{}\n", marker, item_text));
                     }
-                },
-                _ => ()
+                }
+                _ => (),
             }
         }
         if self.config.include_speaker_notes && !self.speaker_notes.is_empty() {
@@ -231,7 +265,7 @@ impl Slide {
 
     /// Links slide images references with their corresponding targets.
     ///
-    /// Ensures that each image referenced by its ID is correctly 
+    /// Ensures that each image referenced by its ID is correctly
     /// linked to the actual internal resource paths stored in the slide.
     /// This method is typically used internally after parsing a slide
     ///
@@ -269,13 +303,13 @@ impl Slide {
     }
 
     /// Compresses the image data and returning it as a `jpg` byte slice
-    /// 
+    ///
     /// # Parameter
-    /// 
+    ///
     /// - `image_data`: The raw image data as a byte array
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// - `Vec<u8>`: Returns the compressed and converted jpg byte array
     ///
     /// # Notes
@@ -296,10 +330,10 @@ impl Slide {
             None
         }
     }
-    
+
     pub fn load_images_manually(&self) -> Option<Vec<ManualImage>> {
         let mut images: Vec<ManualImage> = Vec::new();
-        
+
         let image_refs: Vec<&ImageReference> = self.elements
             .iter()
             .filter_map(|element| match element {
@@ -307,23 +341,20 @@ impl Slide {
                 _ => None,
             })
             .collect();
-        
+
         for image_ref in image_refs {
             if let Some(image_data) = self.image_data.get(&image_ref.id) {
                 let image_data = self.config.compress_images
-                    .then( | | self.compress_image(image_data))
+                    .then(|| self.compress_image(image_data))
                     .unwrap_or_else(|| Option::from(image_data.clone()));
 
                 let base64_str = general_purpose::STANDARD.encode(image_data?);
-                
-                let image = ManualImage::new(
-                    base64_str,
-                    image_ref.clone(),
-                );
+
+                let image = ManualImage::new(base64_str, image_ref.clone());
                 images.push(image);
             }
         }
-        
+
         Some(images)
     }
 
@@ -349,7 +380,11 @@ fn append_quoted_section(output: &mut String, title: &str, elements: &[crate::Te
     }
     output.push_str(&format!("> **{}**\n>\n", title));
     for (index, element) in elements.iter().enumerate() {
-        let content = element.runs.iter().map(|run| run.render_as_md()).collect::<String>();
+        let content = element
+            .runs
+            .iter()
+            .map(|run| run.render_as_md())
+            .collect::<String>();
         for line in content.lines() {
             output.push_str("> ");
             output.push_str(line);
