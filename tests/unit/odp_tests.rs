@@ -194,6 +194,11 @@ fn parses_title_and_run_formatting_from_real_odp() {
     assert!(runs.iter().any(|run| run.text.contains("Italic text") && run.formatting.italic));
     assert!(runs.iter().any(|run| run.text.contains("Underlined text") && run.formatting.underlined));
     assert!(runs.iter().any(|run| run.text.contains("Bold and italic text") && run.formatting.bold && run.formatting.italic));
+
+    let markdown = slides[0].convert_to_md().expect("render first ODP slide");
+    assert!(markdown.contains(
+        "Plain paragraph\n\n**Bold text**\n\n_Italic text_\n\n<u>Underlined text</u>\n\n***Bold and italic text***"
+    ));
 }
 
 #[test]
