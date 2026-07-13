@@ -26,6 +26,21 @@ fn parse_pptx_fixture() -> Option<Vec<Slide>> {
     Some(container.parse_all().expect("parse PPTX fixture"))
 }
 
+#[test]
+fn exposes_and_renders_pptx_metadata_once() {
+    let path = pptx_fixture_path();
+    if !path.is_file() { return; }
+    let mut container = PresentationContainer::open_as(
+        &path,
+        ParserConfig::builder().extract_images(false).build(),
+        PresentationFormat::Pptx,
+    ).expect("open PPTX fixture");
+    assert_eq!(container.metadata().author.as_deref(), Some("Kruthoff, Nils"));
+    let markdown = container.convert_to_md().expect("convert presentation");
+    assert!(markdown.starts_with("<!-- Presentation Metadata\n"));
+    assert_eq!(markdown.matches("Presentation Metadata").count(), 1);
+}
+
 fn slide_text(slide: &Slide) -> String {
     slide
         .elements

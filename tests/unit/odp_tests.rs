@@ -81,6 +81,15 @@ fn open_real_odp_fixture() -> Option<PresentationContainer> {
 }
 
 #[test]
+fn exposes_and_renders_odp_metadata_once() {
+    let Some(mut container) = open_real_odp_fixture() else { return; };
+    assert_eq!(container.metadata().created_at.as_deref(), Some("2026-07-12T21:10:22.756411800"));
+    let markdown = container.convert_to_md().expect("convert ODP presentation");
+    assert!(markdown.starts_with("<!-- Presentation Metadata\n"));
+    assert_eq!(markdown.matches("Presentation Metadata").count(), 1);
+}
+
+#[test]
 fn parses_heading_from_xml_fixture() {
     let xml = load_odp_xml_or_skip!("heading.xml");
     let document = Document::parse(std::str::from_utf8(&xml).unwrap()).unwrap();

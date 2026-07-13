@@ -1,67 +1,38 @@
-﻿//! Basic usage example for the pptx-to-md crate
+//! Preferred PPTX/ODP to Markdown conversion.
 //!
-//! This example demonstrates how to open a PPTX file and convert all slides to Markdown.
-//! It uses `PptxContainer` as the PPTX-only backwards-compatible API. New code that
-//! should support both PPTX and ODP should prefer `PresentationContainer`.
-//!
-//! Run with: cargo run --example basic_usage <path/to/your/presentation.pptx> <extract_images>
+//! Run with: cargo run --example basic_usage <presentation.pptx|presentation.odp> [output.md]
 
-use pptx_to_md::{PptxContainer, Result, ParserConfig, ImageHandlingMode};
+use pptx_to_md::{ParserConfig, PresentationContainer, Result};
 use std::env;
-use std::fs::File;
-use std::io::Write;
+use std::fs;
 use std::path::Path;
 
 fn main() -> Result<()> {
-    // Get the PPTX file path from command line arguments
     let args: Vec<String> = env::args().collect();
     let pptx_path = if args.len() > 1 {
         &args[1]
     } else {
-        eprintln!("Usage: cargo run --example basic_usage <path/to/presentation.pptx> <extract_images>\ncargo run --example basic_usage sample.pptx true");
+        eprintln!("Usage: cargo run --example basic_usage <presentation.pptx|presentation.odp> <extract_images>\ncargo run --example basic_usage sample.pptx true");
         return Ok(());
     };
-    
+
     // Tries to read if the extract_images flag is false else set to true
     let extract_images = if args.len() > 2 {
         !(args[2] == "false" || args[2] == "False" || args[2] == "0")
     } else {
         true
     };
-    
-    println!("Processing PPTX file: {}", pptx_path);
 
-    // Use the config builder to build your config
     let config = ParserConfig::builder()
         .extract_images(extract_images)
-        .compress_images(true)
-        .quality(75)
-        .image_handling_mode(ImageHandlingMode::InMarkdown)
-        .include_slide_number_as_comment(true)
-        .include_speaker_notes(true)
+        .include_presentation_metadata(true)
         .include_comments(true)
+        .include_speaker_notes(true)
         .build();
-    
-    // Open the PPTX file
-    let mut container = PptxContainer::open(Path::new(pptx_path), config)?;
+    let mut container = PresentationContainer::open(Path::new(pptx_path), config)?;
+    let markdown = container.convert_to_md()?;
 
-    // Parse all slides
-    let slides = container.parse_all()?;
-
-    println!("Found {} slides", slides.len());
-
-    // create a new Markdown file
-    let mut md_file = File::create("output.md")?;
-
-    // Convert each slide to Markdown and save
-    for slide in slides {
-        if let Some(md_content) = slide.convert_to_md() {
-            println!("{}", md_content);
-            writeln!(md_file, "{}", md_content).expect("Couldn't write to file");
-        }
-    }
-
-    println!("All slides converted successfully!");
-
+    fs::write("output.md", markdown)?;
+    println!("Converted {:?} presentation to {}", container.format(), "output.md");
     Ok(())
 }

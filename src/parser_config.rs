@@ -33,6 +33,7 @@ pub enum ImageHandlingMode {
 /// | `include_slide_number_as_comment`   | `bool`                | `true`        | Weather the slide number comment is included or not (`<!-- Slide [n] -->`)                                |
 /// | `include_speaker_notes`   | `bool`                | `false`       | Whether speaker notes are appended to Markdown as blockquotes                                               |
 /// | `include_comments`        | `bool`                | `false`       | Whether presentation comments are appended to Markdown as blockquotes                                       |
+/// | `include_presentation_metadata` | `bool`          | `true`        | Whether presentation-wide Markdown starts with a metadata comment                                            |
 ///
 /// # Example
 ///
@@ -58,6 +59,7 @@ pub struct ParserConfig {
     pub include_slide_number_as_comment: bool,
     pub include_speaker_notes: bool,
     pub include_comments: bool,
+    pub include_presentation_metadata: bool,
 }
 
 impl Default for ParserConfig {
@@ -71,6 +73,7 @@ impl Default for ParserConfig {
             include_slide_number_as_comment: true,
             include_speaker_notes: false,
             include_comments: false,
+            include_presentation_metadata: true,
         }
     }
 }
@@ -94,6 +97,7 @@ pub struct ParserConfigBuilder {
     include_slide_number_as_comment: Option<bool>,
     include_speaker_notes: Option<bool>,
     include_comments: Option<bool>,
+    include_presentation_metadata: Option<bool>,
 }
 
 impl ParserConfigBuilder {
@@ -148,6 +152,13 @@ impl ParserConfigBuilder {
         self.include_comments = Some(value);
         self
     }
+
+    /// Sets whether presentation-wide Markdown includes the metadata header.
+    /// Metadata is parsed regardless of this setting.
+    pub fn include_presentation_metadata(mut self, value: bool) -> Self {
+        self.include_presentation_metadata = Some(value);
+        self
+    }
     
     /// Builds the final [`ParserConfig`] instance, applying default values for any fields that were not set.
     pub fn build(self) -> ParserConfig {
@@ -160,6 +171,7 @@ impl ParserConfigBuilder {
             include_slide_number_as_comment: self.include_slide_number_as_comment.unwrap_or(true),
             include_speaker_notes: self.include_speaker_notes.unwrap_or(false),
             include_comments: self.include_comments.unwrap_or(false),
+            include_presentation_metadata: self.include_presentation_metadata.unwrap_or(true),
         }
     }
 }

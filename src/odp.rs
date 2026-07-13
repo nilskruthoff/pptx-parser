@@ -1,7 +1,8 @@
 use crate::{
     ElementPosition, Error, Formatting, ImageReference, ListElement, ListItem, ParserConfig,
-    Result, Run, Slide, SlideElement, TableCell, TableElement, TableRow, TextElement,
+    PresentationMetadata, Result, Run, Slide, SlideElement, TableCell, TableElement, TableRow, TextElement,
 };
+use crate::metadata::{parse_odp_metadata, render_presentation_markdown};
 use roxmltree::{Document, Node};
 use std::collections::HashMap;
 use std::io::Read;
@@ -23,6 +24,7 @@ pub(crate) struct OdpContainer {
     content: Vec<u8>,
     styles: Vec<u8>,
     page_count: usize,
+    metadata: PresentationMetadata,
 }
 
 impl OdpContainer {
@@ -31,7 +33,9 @@ impl OdpContainer {
         let mut archive = zip::ZipArchive::new(file)?;
         let content = read_archive_file(&mut archive, "content.xml")?;
         let styles = read_archive_file(&mut archive, "styles.xml").unwrap_or_default();
+        let meta = read_optional_archive_file(&mut archive, "meta.xml")?;
         let page_count = presentation_page_count(&content)?;
+        let metadata = parse_odp_metadata(meta.as_deref())?;
 
         Ok(Self {
             config,
@@ -39,6 +43,7 @@ impl OdpContainer {
             content,
             styles,
             page_count,
+            metadata,
         })
     }
 
@@ -46,6 +51,13 @@ impl OdpContainer {
         (0..self.page_count)
             .map(|index| self.load_slide(index))
             .collect()
+    }
+
+    pub(crate) fn metadata(&self) -> &PresentationMetadata { &self.metadata }
+
+    pub(crate) fn convert_to_md(&mut self) -> Result<String> {
+        let slides = self.parse_all()?;
+        render_presentation_markdown(&self.metadata, self.config.include_presentation_metadata, slides)
     }
 
     fn load_slide(&mut self, index: usize) -> Result<Slide> {
@@ -118,6 +130,17 @@ fn read_archive_file(archive: &mut zip::ZipArchive<std::fs::File>, path: &str) -
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
     Ok(bytes)
+}
+
+fn read_optional_archive_file(archive: &mut zip::ZipArchive<std::fs::File>, path: &str) -> Result<Option<Vec<u8>>> {
+    let mut file = match archive.by_name(path) {
+        Ok(file) => file,
+        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(Some(bytes))
 }
 
 fn presentation_page_count(xml: &[u8]) -> Result<usize> {
