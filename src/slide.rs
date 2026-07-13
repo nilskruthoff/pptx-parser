@@ -1,5 +1,6 @@
+use crate::markdown::{render_runs, MarkdownContext};
 use crate::parser_config::ImageHandlingMode;
-use crate::{ElementPosition, ImageReference, ParserConfig, Run, SlideElement};
+use crate::{ElementPosition, ImageReference, ParserConfig, SlideElement};
 use base64::{engine::general_purpose, Engine as _};
 use image::ImageOutputFormat;
 use std::collections::HashMap;
@@ -91,9 +92,7 @@ impl Slide {
         for element in sorted_elements {
             match element {
                 SlideElement::Text(text, _pos) => {
-                    for run in &text.runs {
-                        slide_txt.push_str(&run.render_as_md());
-                    }
+                    slide_txt.push_str(&render_runs(&text.runs, MarkdownContext::Flow));
                     slide_txt.push('\n');
                 }
                 SlideElement::Table(table, _pos) => {
@@ -101,14 +100,8 @@ impl Slide {
                     for row in &table.rows {
                         let mut row_texts = Vec::new();
                         for cell in &row.cells {
-                            let cell_text = cell
-                                .runs
-                                .iter()
-                                .map(Run::render_as_md)
-                                .collect::<String>();
-                            let cell_text = cell_text
-                                .trim_end_matches('\n')
-                                .replace('\n', "<br>");
+                            let cell_text =
+                                render_runs(&cell.runs, MarkdownContext::TableCell);
                             row_texts.push(cell_text);
                         }
 
@@ -207,10 +200,7 @@ impl Slide {
                     let mut previous_level = 0;
 
                     for item in &list_element.items {
-                        let mut item_text = String::new();
-                        for run in &item.runs {
-                            item_text.push_str(&run.render_as_md());
-                        }
+                        let item_text = render_runs(&item.runs, MarkdownContext::ListItem);
 
                         let level = item.level as usize;
                         if level >= counters.len() {
@@ -380,11 +370,7 @@ fn append_quoted_section(output: &mut String, title: &str, elements: &[crate::Te
     }
     output.push_str(&format!("> **{}**\n>\n", title));
     for (index, element) in elements.iter().enumerate() {
-        let content = element
-            .runs
-            .iter()
-            .map(|run| run.render_as_md())
-            .collect::<String>();
+        let content = render_runs(&element.runs, MarkdownContext::Quote);
         for line in content.lines() {
             output.push_str("> ");
             output.push_str(line);
