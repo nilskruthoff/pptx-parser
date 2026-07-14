@@ -4,11 +4,30 @@ use roxmltree::Document;
 use std::fs;
 use std::path::PathBuf;
 
+#[test]
+fn parses_text_from_odp_speaker_notes_only() {
+    let xml = r#"
+        <draw:page xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+                   xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"
+                   xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">
+            <draw:custom-shape><text:p>Slide content</text:p></draw:custom-shape>
+            <presentation:notes><draw:custom-shape><text:p>Speaker note</text:p></draw:custom-shape></presentation:notes>
+        </draw:page>
+    "#;
+    let document = Document::parse(xml).expect("parse ODP XML");
+    let notes = parse_speaker_notes(document.root_element(), &StyleResolver::default())
+        .expect("parse speaker notes");
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].runs[0].text, "Speaker note\n");
+}
+
 fn odp_fixture_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("odp_test_data")
-        .join("test.odp")
+        .join("fixtures")
+        .join("integration")
+        .join("odp")
+        .join("basic.odp")
 }
 
 fn text_from_slide(slide: &Slide) -> Vec<String> {
@@ -48,7 +67,9 @@ fn load_odp_xml(filename: &str) -> Option<Vec<u8>> {
     fs::read(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests")
-            .join("odp_test_data")
+            .join("fixtures")
+            .join("unit")
+            .join("odp")
             .join(filename),
     )
     .ok()

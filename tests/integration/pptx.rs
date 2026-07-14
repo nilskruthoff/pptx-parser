@@ -1,12 +1,13 @@
-use super::*;
-use crate::{ParserConfig, PresentationFormat, Slide, SlideElement};
+use pptx_to_md::{ListItem, ParserConfig, PresentationContainer, PresentationFormat, Slide, SlideElement};
 use std::path::PathBuf;
 
 fn pptx_fixture_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("test_data")
-        .join("test.pptx")
+        .join("fixtures")
+        .join("integration")
+        .join("pptx")
+        .join("basic.pptx")
 }
 
 fn parse_pptx_fixture() -> Option<Vec<Slide>> {
@@ -52,7 +53,7 @@ fn slide_text(slide: &Slide) -> String {
         .collect()
 }
 
-fn list_item_text(item: &crate::ListItem) -> String {
+fn list_item_text(item: &ListItem) -> String {
     item.runs.iter().map(|run| run.text.as_str()).collect()
 }
 
