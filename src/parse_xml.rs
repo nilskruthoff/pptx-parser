@@ -1,6 +1,8 @@
 use crate::constants::{A_NAMESPACE, P_NAMESPACE, RELS_NAMESPACE};
 use crate::types::{SlideElement, TableCell, TableElement, TableRow, TextElement};
-use crate::{ElementPosition, Error, Formatting, ImageReference, ListElement, ListItem, Result, Run};
+use crate::{
+    ElementPosition, Error, Formatting, ImageReference, ListElement, ListItem, Result, Run,
+};
 use roxmltree::{Document, Node};
 use std::collections::HashMap;
 
@@ -131,7 +133,10 @@ pub(crate) fn parse_speaker_notes_xml(xml_data: &[u8]) -> Result<Vec<TextElement
     parse_speaker_notes_xml_with_hyperlinks(xml_data, &HashMap::new())
 }
 
-pub(crate) fn parse_speaker_notes_xml_with_hyperlinks(xml_data: &[u8], hyperlinks: &HashMap<String, String>) -> Result<Vec<TextElement>> {
+pub(crate) fn parse_speaker_notes_xml_with_hyperlinks(
+    xml_data: &[u8],
+    hyperlinks: &HashMap<String, String>,
+) -> Result<Vec<TextElement>> {
     let xml_str = std::str::from_utf8(xml_data).map_err(|_| Error::Unknown)?;
     let doc = Document::parse(xml_str)?;
     let root = doc.root_element();
@@ -288,12 +293,12 @@ fn parse_group(
             ParsedContent::List(list) => elements.push(SlideElement::List(list, position)),
         },
         "graphicFrame" => {
-            if let Some(graphic_element) = parse_graphic_frame_with_hyperlinks(&node, hyperlinks)? {
+            if let Some(graphic_element) = parse_graphic_frame_with_hyperlinks(node, hyperlinks)? {
                 elements.push(SlideElement::Table(graphic_element, position));
             }
         }
         "pic" => {
-            let image_reference = parse_pic(&node)?;
+            let image_reference = parse_pic(node)?;
             elements.push(SlideElement::Image(image_reference, position));
         }
         "grpSp" => {
@@ -411,7 +416,10 @@ fn parse_table(tbl_node: &Node) -> Result<TableElement> {
     parse_table_with_hyperlinks(tbl_node, &HashMap::new())
 }
 
-fn parse_table_with_hyperlinks(tbl_node: &Node, hyperlinks: &HashMap<String, String>) -> Result<TableElement> {
+fn parse_table_with_hyperlinks(
+    tbl_node: &Node,
+    hyperlinks: &HashMap<String, String>,
+) -> Result<TableElement> {
     let mut rows = Vec::new();
 
     for tr_node in tbl_node.children().filter(|n| {
@@ -433,7 +441,10 @@ fn parse_table_row(tr_node: &Node) -> Result<TableRow> {
     parse_table_row_with_hyperlinks(tr_node, &HashMap::new())
 }
 
-fn parse_table_row_with_hyperlinks(tr_node: &Node, hyperlinks: &HashMap<String, String>, ) -> Result<TableRow> {
+fn parse_table_row_with_hyperlinks(
+    tr_node: &Node,
+    hyperlinks: &HashMap<String, String>,
+) -> Result<TableRow> {
     let mut cells = Vec::new();
 
     for tc_node in tr_node.children().filter(|n| {
@@ -455,7 +466,10 @@ fn parse_table_cell(tc_node: &Node) -> Result<TableCell> {
     parse_table_cell_with_hyperlinks(tc_node, &HashMap::new())
 }
 
-fn parse_table_cell_with_hyperlinks(tc_node: &Node, hyperlinks: &HashMap<String, String>, ) -> Result<TableCell> {
+fn parse_table_cell_with_hyperlinks(
+    tc_node: &Node,
+    hyperlinks: &HashMap<String, String>,
+) -> Result<TableCell> {
     let mut runs = Vec::new();
 
     if let Some(tx_body_node) = tc_node.children().find(|n| {
@@ -521,7 +535,10 @@ fn parse_list(tx_body_node: &Node) -> Result<ListElement> {
     parse_list_with_hyperlinks(tx_body_node, &HashMap::new())
 }
 
-fn parse_list_with_hyperlinks(tx_body_node: &Node, hyperlinks: &HashMap<String, String>, ) -> Result<ListElement> {
+fn parse_list_with_hyperlinks(
+    tx_body_node: &Node,
+    hyperlinks: &HashMap<String, String>,
+) -> Result<ListElement> {
     let mut items = Vec::new();
 
     for p_node in tx_body_node.children().filter(|n| {
@@ -533,7 +550,11 @@ fn parse_list_with_hyperlinks(tx_body_node: &Node, hyperlinks: &HashMap<String, 
 
         let runs = parse_paragraph_with_hyperlinks(&p_node, true, hyperlinks)?;
 
-        items.push(ListItem { level, is_ordered, runs, });
+        items.push(ListItem {
+            level,
+            is_ordered,
+            runs,
+        });
     }
 
     Ok(ListElement { items })
@@ -678,14 +699,22 @@ fn parse_run_with_hyperlinks(r_node: &Node, hyperlinks: &HashMap<String, String>
         .and_then(|id| hyperlinks.get(id))
         .cloned();
 
-    Ok(Run { text, formatting, link_target})
+    Ok(Run {
+        text,
+        formatting,
+        link_target,
+    })
 }
 
 /// Extracts the effective slide position for a node.
 ///
 /// The node's local coordinates are read from its transform XML and then converted
 /// through the accumulated parent-group transform.
-fn extract_position(node: &Node, transform: CoordinateTransform, inherited_positions: &InheritedPositions) -> ElementPosition {
+fn extract_position(
+    node: &Node,
+    transform: CoordinateTransform,
+    inherited_positions: &InheritedPositions,
+) -> ElementPosition {
     extract_raw_position(node)
         .map(|position| transform.apply(position))
         .or_else(|| extract_placeholder_key(node).and_then(|key| inherited_positions.resolve(&key)))
@@ -761,7 +790,8 @@ fn extract_group_transform(node: &Node) -> CoordinateTransform {
                     && n.tag_name().name() == "xfrm"
                     && n.tag_name().namespace() == Some(A_NAMESPACE)
             })
-        }) else {
+        })
+    else {
         return CoordinateTransform::identity();
     };
 
@@ -774,8 +804,16 @@ fn extract_group_transform(node: &Node) -> CoordinateTransform {
     let ch_ext_x = extract_child_attr_i64(&xfrm, A_NAMESPACE, "chExt", "cx").unwrap_or(0) as f64;
     let ch_ext_y = extract_child_attr_i64(&xfrm, A_NAMESPACE, "chExt", "cy").unwrap_or(0) as f64;
 
-    let scale_x = if ch_ext_x == 0.0 { 1.0 } else { ext_x / ch_ext_x };
-    let scale_y = if ch_ext_y == 0.0 { 1.0 } else { ext_y / ch_ext_y };
+    let scale_x = if ch_ext_x == 0.0 {
+        1.0
+    } else {
+        ext_x / ch_ext_x
+    };
+    let scale_y = if ch_ext_y == 0.0 {
+        1.0
+    } else {
+        ext_y / ch_ext_y
+    };
 
     CoordinateTransform {
         scale_x,
@@ -786,7 +824,12 @@ fn extract_group_transform(node: &Node) -> CoordinateTransform {
 }
 
 /// Reads an integer attribute from a direct child node with the given namespace and tag name.
-fn extract_child_attr_i64(node: &Node, namespace: &str, child_name: &str, attr_name: &str, ) -> Option<i64> {
+fn extract_child_attr_i64(
+    node: &Node,
+    namespace: &str,
+    child_name: &str,
+    attr_name: &str,
+) -> Option<i64> {
     node.children()
         .find(|n| {
             n.is_element()
@@ -824,16 +867,26 @@ pub fn extract_inherited_positions(
 
     let c_sld = root
         .descendants()
-        .find(|n| n.tag_name().name() == "cSld" && n.tag_name().namespace() == root.tag_name().namespace())
+        .find(|n| {
+            n.tag_name().name() == "cSld" && n.tag_name().namespace() == root.tag_name().namespace()
+        })
         .ok_or(Error::Unknown)?;
 
     let sp_tree = c_sld
         .children()
-        .find(|n| { n.tag_name().name() == "spTree" && n.tag_name().namespace() == root.tag_name().namespace()})
+        .find(|n| {
+            n.tag_name().name() == "spTree"
+                && n.tag_name().namespace() == root.tag_name().namespace()
+        })
         .ok_or(Error::Unknown)?;
 
     let mut positions = inherited_positions.positions.clone();
-    collect_placeholder_positions(&sp_tree, CoordinateTransform::identity(), inherited_positions, &mut positions);
+    collect_placeholder_positions(
+        &sp_tree,
+        CoordinateTransform::identity(),
+        inherited_positions,
+        &mut positions,
+    );
 
     Ok(InheritedPositions { positions })
 }

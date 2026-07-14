@@ -22,10 +22,8 @@ fn main() -> Result<()> {
     println!("Processing PPTX file: {}", pptx_path);
 
     // Use the config builder to build your config
-    let config = ParserConfig::builder()
-        .extract_images(true)
-        .build();
-    
+    let config = ParserConfig::builder().extract_images(true).build();
+
     // Open the PPTX file with the streaming API
     let mut streamer = PptxContainer::open(Path::new(pptx_path), config)?;
 
@@ -33,19 +31,33 @@ fn main() -> Result<()> {
     for slide_result in streamer.iter_slides() {
         match slide_result {
             Ok(slide) => {
-                println!("Processing slide {} ({} elements)", slide.slide_number, slide.elements.len());
+                println!(
+                    "Processing slide {} ({} elements)",
+                    slide.slide_number,
+                    slide.elements.len()
+                );
 
                 // iterate over each slide element and match them to add custom logic
                 for element in &slide.elements {
                     match element {
-                        SlideElement::Text(text, pos) => { println!("{:?}\t{:?}\n", text, pos) }
-                        SlideElement::Table(table, pos) => { println!("{:?}\t{:?}\n", table, pos) }
-                        SlideElement::Image(image, pos) => { println!("{:?}\t{:?}\n", image, pos) }
-                        SlideElement::List(list, pos) => { println!("{:?}\t{:?}\n", list, pos) }
-                        SlideElement::Unknown => { println!("An Unknown element was found.\n") }
+                        SlideElement::Text(text, pos) => {
+                            println!("{:?}\t{:?}\n", text, pos)
+                        }
+                        SlideElement::Table(table, pos) => {
+                            println!("{:?}\t{:?}\n", table, pos)
+                        }
+                        SlideElement::Image(image, pos) => {
+                            println!("{:?}\t{:?}\n", image, pos)
+                        }
+                        SlideElement::List(list, pos) => {
+                            println!("{:?}\t{:?}\n", list, pos)
+                        }
+                        SlideElement::Unknown => {
+                            println!("An Unknown element was found.\n")
+                        }
                     }
                 }
-            },
+            }
             Err(e) => {
                 eprintln!("Error processing slide: {:?}", e);
             }

@@ -1,7 +1,8 @@
 use crate::{Error, Result, Slide};
 use roxmltree::{Document, Node};
 
-const CORE_PROPERTIES_NS: &str = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties";
+const CORE_PROPERTIES_NS: &str =
+    "http://schemas.openxmlformats.org/package/2006/metadata/core-properties";
 const DC_NS: &str = "http://purl.org/dc/elements/1.1/";
 const DCTERMS_NS: &str = "http://purl.org/dc/terms/";
 const META_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:meta:1.0";

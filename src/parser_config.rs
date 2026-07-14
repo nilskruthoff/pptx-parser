@@ -1,4 +1,4 @@
-﻿use std::path::PathBuf;
+use std::path::PathBuf;
 
 /// Determines how images are handled during content export.
 ///
@@ -159,14 +159,16 @@ impl ParserConfigBuilder {
         self.include_presentation_metadata = Some(value);
         self
     }
-    
+
     /// Builds the final [`ParserConfig`] instance, applying default values for any fields that were not set.
     pub fn build(self) -> ParserConfig {
         ParserConfig {
             extract_images: self.extract_images.unwrap_or(true),
             compress_images: self.compress_images.unwrap_or(true),
             quality: self.image_quality.unwrap_or(80),
-            image_handling_mode: self.image_handling_mode.unwrap_or(ImageHandlingMode::InMarkdown),
+            image_handling_mode: self
+                .image_handling_mode
+                .unwrap_or(ImageHandlingMode::InMarkdown),
             image_output_path: self.image_output_path,
             include_slide_number_as_comment: self.include_slide_number_as_comment.unwrap_or(true),
             include_speaker_notes: self.include_speaker_notes.unwrap_or(false),

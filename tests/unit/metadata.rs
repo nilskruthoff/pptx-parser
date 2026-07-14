@@ -21,7 +21,10 @@ fn parses_odp_metadata() {
 
 #[test]
 fn metadata_comment_is_safe_and_optional() {
-    let metadata = PresentationMetadata { title: Some("Deck --> injected\nline".to_string()), ..PresentationMetadata::default() };
+    let metadata = PresentationMetadata {
+        title: Some("Deck --> injected\nline".to_string()),
+        ..PresentationMetadata::default()
+    };
     let rendered = render_metadata_comment(&metadata).unwrap();
     assert!(!rendered[4..rendered.len() - 3].contains("--"));
     assert!(rendered.contains("Deck &#45;&#45;> injected line"));
@@ -30,7 +33,10 @@ fn metadata_comment_is_safe_and_optional() {
 
 #[test]
 fn absent_metadata_is_empty_and_malformed_metadata_is_an_error() {
-    assert_eq!(parse_pptx_metadata(None).unwrap(), PresentationMetadata::default());
+    assert_eq!(
+        parse_pptx_metadata(None).unwrap(),
+        PresentationMetadata::default()
+    );
     assert!(parse_pptx_metadata(Some(b"<broken>")).is_err());
     assert!(parse_odp_metadata(Some(b"<broken>")).is_err());
 }

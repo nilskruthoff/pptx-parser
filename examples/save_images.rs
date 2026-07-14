@@ -1,14 +1,14 @@
-﻿//! Basic usage example for the pptx-to-md crate
+//! Basic usage example for the pptx-to-md crate
 //!
 //! This example demonstrates how to open a PPTX file and convert all slides to Markdown.
 //!
 //! Run with: cargo run --example save_images <path/to/your/presentation.pptx>
 
 use pptx_to_md::{ImageHandlingMode, ParserConfig, PptxContainer, Result};
+use std::env;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::env;
 
 fn main() -> Result<()> {
     // Get the PPTX file path from command line arguments and provide the mandatory output path

@@ -44,6 +44,7 @@ pub struct Slide {
 }
 
 impl Slide {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         rel_path: String,
         slide_number: u32,
@@ -100,8 +101,7 @@ impl Slide {
                     for row in &table.rows {
                         let mut row_texts = Vec::new();
                         for cell in &row.cells {
-                            let cell_text =
-                                render_runs(&cell.runs, MarkdownContext::TableCell);
+                            let cell_text = render_runs(&cell.runs, MarkdownContext::TableCell);
                             row_texts.push(cell_text);
                         }
 
@@ -129,15 +129,15 @@ impl Slide {
                     match self.config.image_handling_mode {
                         ImageHandlingMode::InMarkdown => {
                             if let Some(image_data) = self.image_data.get(&image_ref.id) {
-                                let image_data = self
-                                    .config
-                                    .compress_images
-                                    .then(|| self.compress_image(image_data))
-                                    .unwrap_or_else(|| Option::from(image_data.clone()));
+                                let image_data = if self.config.compress_images {
+                                    self.compress_image(image_data)
+                                } else {
+                                    Some(image_data.clone())
+                                };
 
                                 let base64_string = general_purpose::STANDARD.encode(image_data?);
-                                let image_name = &image_ref.target.split('/').last()?;
-                                let file_ext = &image_name.split('.').last()?;
+                                let image_name = image_ref.target.split('/').next_back()?;
+                                let file_ext = image_name.split('.').next_back()?;
 
                                 slide_txt.push_str(
                                     format!(
@@ -150,19 +150,17 @@ impl Slide {
                         }
                         ImageHandlingMode::Save => {
                             if let Some(image_data) = self.image_data.get(&image_ref.id) {
-                                let image_data = self
-                                    .config
-                                    .compress_images
-                                    .then(|| self.compress_image(image_data))
-                                    .unwrap_or_else(|| Option::from(image_data.clone()));
+                                let image_data = if self.config.compress_images {
+                                    self.compress_image(image_data)
+                                } else {
+                                    Some(image_data.clone())
+                                };
 
-                                let ext = self
-                                    .config
-                                    .compress_images
-                                    .then(|| "jpg".to_string())
-                                    .unwrap_or_else(|| {
-                                        self.get_image_extension(&image_ref.target.clone())
-                                    });
+                                let ext = if self.config.compress_images {
+                                    "jpg".to_string()
+                                } else {
+                                    self.get_image_extension(&image_ref.target)
+                                };
 
                                 let output_dir = self
                                     .config
@@ -185,13 +183,17 @@ impl Slide {
                                 let _ = fs::write(&image_path, image_data?);
 
                                 let abs_file_url = self.path_to_file_url(&image_path);
-                                let html_link = format!(r#"<a href={:?}>{file_name}</a>"#, abs_file_url?);
+                                let html_link =
+                                    format!(r#"<a href={:?}>{file_name}</a>"#, abs_file_url?);
                                 image_count += 1;
                                 slide_txt.push_str(&html_link);
                                 slide_txt.push('\n');
                             }
                         }
-                        ImageHandlingMode::Manually => { slide_txt.push('\n'); continue; }
+                        ImageHandlingMode::Manually => {
+                            slide_txt.push('\n');
+                            continue;
+                        }
                     }
                     slide_txt.push('\n');
                 }
@@ -269,7 +271,8 @@ impl Slide {
     /// | `target`  | *../media/image2.png* |
     ///
     pub fn link_images(&mut self) {
-        let id_to_target: HashMap<String, String> = self.images
+        let id_to_target: HashMap<String, String> = self
+            .images
             .iter()
             .map(|img_ref| (img_ref.id.clone(), img_ref.target.clone()))
             .collect();
@@ -314,7 +317,13 @@ impl Slide {
         let mut output = Vec::new();
         let quality = self.config.quality;
 
-        if img.write_to(&mut Cursor::new(&mut output), ImageOutputFormat::Jpeg(quality)).is_ok() {
+        if img
+            .write_to(
+                &mut Cursor::new(&mut output),
+                ImageOutputFormat::Jpeg(quality),
+            )
+            .is_ok()
+        {
             Some(output)
         } else {
             None
@@ -324,7 +333,8 @@ impl Slide {
     pub fn load_images_manually(&self) -> Option<Vec<ManualImage>> {
         let mut images: Vec<ManualImage> = Vec::new();
 
-        let image_refs: Vec<&ImageReference> = self.elements
+        let image_refs: Vec<&ImageReference> = self
+            .elements
             .iter()
             .filter_map(|element| match element {
                 SlideElement::Image(ref img, _pos) => Some(img),
@@ -334,9 +344,11 @@ impl Slide {
 
         for image_ref in image_refs {
             if let Some(image_data) = self.image_data.get(&image_ref.id) {
-                let image_data = self.config.compress_images
-                    .then(|| self.compress_image(image_data))
-                    .unwrap_or_else(|| Option::from(image_data.clone()));
+                let image_data = if self.config.compress_images {
+                    self.compress_image(image_data)
+                } else {
+                    Some(image_data.clone())
+                };
 
                 let base64_str = general_purpose::STANDARD.encode(image_data?);
 

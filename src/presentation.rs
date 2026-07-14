@@ -40,11 +40,7 @@ impl PresentationContainer {
     ///
     /// Use this when the caller already knows the format and wants to skip
     /// auto-detection, or when a file extension is not a reliable signal.
-    pub fn open_as(
-        path: &Path,
-        config: ParserConfig,
-        format: PresentationFormat,
-    ) -> Result<Self> {
+    pub fn open_as(path: &Path, config: ParserConfig, format: PresentationFormat) -> Result<Self> {
         let inner = match format {
             PresentationFormat::Pptx => ContainerInner::Pptx(PptxContainer::open(path, config)?),
             PresentationFormat::Odp => ContainerInner::Odp(OdpContainer::open(path, config)?),
