@@ -2,10 +2,9 @@ use crate::markdown::{render_runs, MarkdownContext};
 use crate::parser_config::ImageHandlingMode;
 use crate::{ElementPosition, ImageReference, ParserConfig, SlideElement};
 use base64::{engine::general_purpose, Engine as _};
-use image::ImageOutputFormat;
+use image::codecs::jpeg::JpegEncoder;
 use std::collections::HashMap;
 use std::fs;
-use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 /// Encapsulates images for manual extraction of images from slides
@@ -278,7 +277,7 @@ impl Slide {
             .collect();
 
         for element in &mut self.elements {
-            if let SlideElement::Image(ref mut img_ref, _pos) = element {
+            if let SlideElement::Image(img_ref, _pos) = element {
                 if let Some(target) = id_to_target.get(&img_ref.id) {
                     img_ref.target = target.clone();
                 }
@@ -317,11 +316,8 @@ impl Slide {
         let mut output = Vec::new();
         let quality = self.config.quality;
 
-        if img
-            .write_to(
-                &mut Cursor::new(&mut output),
-                ImageOutputFormat::Jpeg(quality),
-            )
+        if JpegEncoder::new_with_quality(&mut output, quality)
+            .encode_image(&img)
             .is_ok()
         {
             Some(output)
@@ -337,7 +333,7 @@ impl Slide {
             .elements
             .iter()
             .filter_map(|element| match element {
-                SlideElement::Image(ref img, _pos) => Some(img),
+                SlideElement::Image(img, _pos) => Some(img),
                 _ => None,
             })
             .collect();
