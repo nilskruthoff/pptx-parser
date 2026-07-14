@@ -346,29 +346,6 @@ fn parse_comments(page: Node<'_, '_>, styles: &StyleResolver) -> Result<Vec<Text
         .collect())
 }
 
-#[cfg(test)]
-mod speaker_notes_tests {
-    use super::*;
-
-    #[test]
-    fn parses_text_from_odp_speaker_notes_only() {
-        let xml = r#"
-            <draw:page xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
-                       xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"
-                       xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">
-                <draw:custom-shape><text:p>Slide content</text:p></draw:custom-shape>
-                <presentation:notes><draw:custom-shape><text:p>Speaker note</text:p></draw:custom-shape></presentation:notes>
-            </draw:page>
-        "#;
-        let document = Document::parse(xml).expect("parse ODP XML");
-        let notes = parse_speaker_notes(document.root_element(), &StyleResolver::default())
-            .expect("parse speaker notes");
-
-        assert_eq!(notes.len(), 1);
-        assert_eq!(notes[0].runs[0].text, "Speaker note\n");
-    }
-}
-
 fn parse_node(
     node: Node<'_, '_>,
     parent_position: ElementPosition,
@@ -676,5 +653,5 @@ fn is_element(node: Node<'_, '_>, namespace: &str, name: &str) -> bool {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/odp_tests.rs"]
+#[path = "../tests/unit/odp.rs"]
 mod tests;
