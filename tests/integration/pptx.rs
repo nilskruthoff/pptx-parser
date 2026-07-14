@@ -57,7 +57,7 @@ fn exposes_and_renders_pptx_metadata_once() {
     .expect("open PPTX fixture");
     assert_eq!(
         container.metadata().author.as_deref(),
-        Some("Kruthoff, Nils")
+        Some("Doe, John")
     );
     let markdown = container.convert_to_md().expect("convert presentation");
     assert!(markdown.starts_with("<!-- Presentation Metadata\n"));
