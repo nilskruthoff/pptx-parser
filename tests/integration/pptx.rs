@@ -1,4 +1,9 @@
-use pptx_to_md::{ListItem, ParserConfig, PresentationContainer, PresentationFormat, Slide, SlideElement};
+use base64::Engine as _;
+use pptx_to_md::{
+    ImageHandlingMode, ListItem, ParserConfig, PresentationContainer, PresentationFormat, Slide,
+    SlideElement,
+};
+use std::fs;
 use std::path::PathBuf;
 
 fn pptx_fixture_path() -> PathBuf {
@@ -25,6 +30,17 @@ fn parse_pptx_fixture() -> Option<Vec<Slide>> {
 
     assert_eq!(container.format(), PresentationFormat::Pptx);
     Some(container.parse_all().expect("parse PPTX fixture"))
+}
+
+fn image_fixture_bytes() -> Vec<u8> {
+    fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("integration")
+            .join("example.jpg"),
+    )
+    .expect("read image fixture")
 }
 
 #[test]
@@ -79,7 +95,7 @@ fn comment_text(slide: &Slide) -> String {
 fn parses_real_pptx_fixture_and_preserves_slide_order() {
     let Some(slides) = parse_pptx_fixture() else { return; };
 
-    assert_eq!(slides.len(), 6);
+    assert_eq!(slides.len(), 7);
     assert!(slide_text(&slides[0]).contains("PPTX Parser Fixtures"));
     assert!(slide_text(&slides[1]).contains("Lists"));
     assert!(slide_text(&slides[2]).contains("Tables"));
@@ -87,6 +103,7 @@ fn parses_real_pptx_fixture_and_preserves_slide_order() {
     assert!(slide_text(&slides[4]).contains("Sorting and empty content"));
     assert_eq!(speaker_note_text(&slides[5]), "Speaker notes\n");
     assert_eq!(comment_text(&slides[5]), "Comment\n");
+    assert!(slide_text(&slides[6]).contains("Image"));
 }
 
 #[test]
@@ -193,4 +210,38 @@ fn parses_grouped_text_sorting_and_empty_cells_from_real_pptx() {
     assert!(table.rows[0].cells[1].runs.is_empty());
     assert!(table.rows[1].cells[0].runs.is_empty());
     assert!(table.rows[1].cells[2].runs.is_empty());
+}
+
+#[test]
+fn extracts_and_embeds_the_image_on_slide_seven() {
+    let mut container = PresentationContainer::open_as(
+        &pptx_fixture_path(),
+        ParserConfig::builder()
+            .extract_images(true)
+            .compress_images(false)
+            .image_handling_mode(ImageHandlingMode::InMarkdown)
+            .build(),
+        PresentationFormat::Pptx,
+    )
+    .expect("open PPTX fixture");
+    let slides = container.parse_all().expect("parse PPTX fixture");
+    let slide = slides
+        .iter()
+        .find(|slide| slide.slide_number == 7)
+        .expect("image slide");
+
+    assert!(slide_text(slide).contains("Image"));
+    assert_eq!(slide.images.len(), 1);
+    let image = slide.images.first().expect("image reference");
+    assert!(slide.elements.iter().any(|element| {
+        matches!(element, SlideElement::Image(reference, _) if reference.id == image.id)
+    }));
+
+    let expected_bytes = image_fixture_bytes();
+    assert_eq!(slide.image_data.get(&image.id), Some(&expected_bytes));
+
+    let expected_base64 = base64::engine::general_purpose::STANDARD.encode(expected_bytes);
+    let markdown = slide.convert_to_md().expect("render image slide");
+    assert!(markdown.contains("data:image/"));
+    assert!(markdown.contains(&expected_base64));
 }

@@ -194,7 +194,7 @@ fn parses_real_odp_fixture_and_preserves_slide_order() {
     assert_eq!(container.format(), PresentationFormat::Odp);
     let slides = container.parse_all().expect("parse ODP fixture");
 
-    assert_eq!(slides.len(), 6);
+    assert_eq!(slides.len(), 7);
     assert!(text_from_slide(&slides[0]).join("\n").contains("ODP Parser Fixture"));
     assert!(text_from_slide(&slides[1]).join("\n").contains("Lists"));
     assert!(text_from_slide(&slides[2]).join("\n").contains("Tables"));
@@ -202,6 +202,7 @@ fn parses_real_odp_fixture_and_preserves_slide_order() {
     assert!(text_from_slide(&slides[4]).join("\n").contains("Sorting and empty content"));
     assert_eq!(speaker_note_text(&slides[5]), "Speaker notes\n");
     assert_eq!(comment_text(&slides[5]), "Comment\n");
+    assert!(text_from_slide(&slides[6]).join("\n").contains("Image"));
 }
 
 #[test]
