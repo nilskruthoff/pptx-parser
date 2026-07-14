@@ -6,8 +6,15 @@ description = "Parse Microsoft PowerPoint files (.pptx) into Markdown (.md)"
 readme = "README.md"
 repository = "https://github.com/nilskruthoff/pptx-parser.git"
 license = "MIT OR Apache-2.0"
-keywords = ["pptx", "markdown", "conversion", "microsoft", "parser"]
+keywords = ["pptx", "markdown", "odp", "microsoft", "parser"]
 categories = ["text-processing", "parser-implementations"]
+include = [
+    "/src/**",
+    "/examples/**",
+    "/README.md",
+    "/LICENCE-MIT",
+    "/LICENSE-APACHE",
+]
 
 [[example]]
 name = "basic_usage"
