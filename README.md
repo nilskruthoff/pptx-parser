@@ -28,7 +28,7 @@ It also supports OpenDocument Presentation (`.odp`).
 `PresentationContainer` is the recommended entry point for new code. It detects whether the input is a PowerPoint (`.pptx`) or OpenDocument Presentation (`.odp`) file and exposes the same parsing API for both formats.
 
 ```rust
-use pptx_to_md::{ParserConfig, PresentationContainer};
+use pptx_to_md::{ImageHandlingMode, ParserConfig, PresentationContainer};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -37,7 +37,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .compress_images(true)
         .quality(80)
         .image_handling_mode(ImageHandlingMode::InMarkdown)
-        .image_output_path(None)
         .include_slide_number_as_comment(true)
         .include_speaker_notes(false)
         .include_comments(false)
@@ -63,7 +62,6 @@ streaming, and per-slide APIs remain available for structured processing.
 To access metadata as structured Rust values without converting slides, see
 [`examples/presentation_metadata.rs`](https://github.com/nilskruthoff/pptx-parser/tree/master/examples/presentation_metadata.rs).
 
-For ODP-specific usage, see [`examples/basic_odp_usage.rs`](https://github.com/nilskruthoff/pptx-parser/tree/master/examples/basic_odp_usage.rs).
 For PPTX-only code, `PptxContainer` remains available for backwards compatibility and for callers that explicitly want the old PowerPoint-only entry point. New code that may handle both formats should prefer `PresentationContainer`.
 For more usage examples, refer to the [examples](https://github.com/nilskruthoff/pptx-parser/tree/master/examples) directory.
 
@@ -137,11 +135,10 @@ pptx-to-md/
 ├── LICENSE-APACHE
 ├── examples/           # Simple examples to present the usage of this crate
 │   ├── basic_usage.rs
-│   ├── basic_odp_usage.rs
 │   ├── presentation_metadata.rs
 │   ├── manual_image_extraction.rs
 │   ├── memory_efficient_streaming.rs
-│   ├── performance_tests.rs
+│   ├── performance_test.rs
 │   ├── save_images.rs
 │   └── slide_elements.rs
 ├── src/
@@ -155,8 +152,9 @@ pptx-to-md/
 │   ├── parse_rels.rs     # Relationship parsing logic
 │   └── types.rs          # Common data types used
 ├── tests/
-│   ├── test_data/      # XML & MD test data files
-└── └── slide_tests.rs  # tests for md conversion logic
+│   ├── fixtures/       # XML, Markdown, media, and presentation fixtures
+│   ├── integration/    # end-to-end PPTX and ODP tests
+│   └── unit/           # module-level tests
 ```
 
 ---
@@ -167,7 +165,7 @@ Include the following line in your Cargo.toml dependencies section:
 
 ```toml
 [dependencies]
-pptx-to-md = "0.4.0"
+pptx-to-md = "0.5.0"
 ```
 
 ---

@@ -1,9 +1,11 @@
 use super::{Result, Slide};
-use crate::constants::{COMMENTS_NAMESPACE, NOTES_SLIDE_NAMESPACE, SLIDE_LAYOUT_NAMESPACE, SLIDE_MASTER_NAMESPACE, };
+use crate::constants::{
+    COMMENTS_NAMESPACE, NOTES_SLIDE_NAMESPACE, SLIDE_LAYOUT_NAMESPACE, SLIDE_MASTER_NAMESPACE,
+};
+use crate::metadata::{parse_pptx_metadata, render_presentation_markdown};
 use crate::parse_rels::{parse_hyperlink_rels, parse_relationships};
 use crate::parse_xml::{extract_inherited_positions, InheritedPositions};
 use crate::parser_config::ParserConfig;
-use crate::metadata::{parse_pptx_metadata, render_presentation_markdown};
 use crate::PresentationMetadata;
 use rayon::prelude::*;
 use std::sync::Arc;
@@ -67,7 +69,13 @@ impl PptxContainer {
         let core_xml = read_optional_archive_file(&mut archive, "docProps/core.xml")?;
         let metadata = parse_pptx_metadata(core_xml.as_deref())?;
 
-        Ok(Self { archive, slide_paths, config, slide_count, metadata })
+        Ok(Self {
+            archive,
+            slide_paths,
+            config,
+            slide_count,
+            metadata,
+        })
     }
 
     /// Parses the data of all slides for each path present in the containers' `slide_path` vector.
@@ -94,12 +102,20 @@ impl PptxContainer {
 
     pub fn convert_to_md(&mut self) -> Result<String> {
         let slides = self.parse_all()?;
-        render_presentation_markdown(&self.metadata, self.config.include_presentation_metadata, slides)
+        render_presentation_markdown(
+            &self.metadata,
+            self.config.include_presentation_metadata,
+            slides,
+        )
     }
 
     pub fn convert_to_md_multi_threaded(&mut self) -> Result<String> {
         let slides = self.parse_all_multi_threaded()?;
-        render_presentation_markdown(&self.metadata, self.config.include_presentation_metadata, slides)
+        render_presentation_markdown(
+            &self.metadata,
+            self.config.include_presentation_metadata,
+            slides,
+        )
     }
 
     /// Parses all slides in the presentation with optimized multithreaded processing.
@@ -468,7 +484,10 @@ impl PptxContainer {
     }
 }
 
-fn read_optional_archive_file(archive: &mut zip::ZipArchive<std::fs::File>, path: &str) -> Result<Option<Vec<u8>>> {
+fn read_optional_archive_file(
+    archive: &mut zip::ZipArchive<std::fs::File>,
+    path: &str,
+) -> Result<Option<Vec<u8>>> {
     let mut file = match archive.by_name(path) {
         Ok(file) => file,
         Err(zip::result::ZipError::FileNotFound) => return Ok(None),

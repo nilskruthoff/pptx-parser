@@ -46,13 +46,19 @@ fn image_fixture_bytes() -> Vec<u8> {
 #[test]
 fn exposes_and_renders_pptx_metadata_once() {
     let path = pptx_fixture_path();
-    if !path.is_file() { return; }
+    if !path.is_file() {
+        return;
+    }
     let mut container = PresentationContainer::open_as(
         &path,
         ParserConfig::builder().extract_images(false).build(),
         PresentationFormat::Pptx,
-    ).expect("open PPTX fixture");
-    assert_eq!(container.metadata().author.as_deref(), Some("Kruthoff, Nils"));
+    )
+    .expect("open PPTX fixture");
+    assert_eq!(
+        container.metadata().author.as_deref(),
+        Some("Doe, John")
+    );
     let markdown = container.convert_to_md().expect("convert presentation");
     assert!(markdown.starts_with("<!-- Presentation Metadata\n"));
     assert_eq!(markdown.matches("Presentation Metadata").count(), 1);
@@ -63,7 +69,12 @@ fn slide_text(slide: &Slide) -> String {
         .elements
         .iter()
         .filter_map(|element| match element {
-            SlideElement::Text(text, _) => Some(text.runs.iter().map(|run| run.text.as_str()).collect::<String>()),
+            SlideElement::Text(text, _) => Some(
+                text.runs
+                    .iter()
+                    .map(|run| run.text.as_str())
+                    .collect::<String>(),
+            ),
             _ => None,
         })
         .collect()
@@ -93,7 +104,9 @@ fn comment_text(slide: &Slide) -> String {
 
 #[test]
 fn parses_real_pptx_fixture_and_preserves_slide_order() {
-    let Some(slides) = parse_pptx_fixture() else { return; };
+    let Some(slides) = parse_pptx_fixture() else {
+        return;
+    };
 
     assert_eq!(slides.len(), 7);
     assert!(slide_text(&slides[0]).contains("PPTX Parser Fixtures"));
@@ -108,7 +121,9 @@ fn parses_real_pptx_fixture_and_preserves_slide_order() {
 
 #[test]
 fn parses_title_and_run_formatting_from_real_pptx() {
-    let Some(slides) = parse_pptx_fixture() else { return; };
+    let Some(slides) = parse_pptx_fixture() else {
+        return;
+    };
     assert!(slide_text(&slides[0]).contains("PPTX Parser Fixtures"));
     let runs: Vec<_> = slides[0]
         .elements
@@ -120,10 +135,18 @@ fn parses_title_and_run_formatting_from_real_pptx() {
         .flatten()
         .collect();
 
-    assert!(runs.iter().any(|run| run.text.contains("Bold") && run.formatting.bold));
-    assert!(runs.iter().any(|run| run.text.contains("Italic") && run.formatting.italic));
-    assert!(runs.iter().any(|run| run.text.contains("Underlined") && run.formatting.underlined));
-    assert!(runs.iter().any(|run| run.text.contains("Bold") && run.formatting.bold && run.formatting.italic));
+    assert!(runs
+        .iter()
+        .any(|run| run.text.contains("Bold") && run.formatting.bold));
+    assert!(runs
+        .iter()
+        .any(|run| run.text.contains("Italic") && run.formatting.italic));
+    assert!(runs
+        .iter()
+        .any(|run| run.text.contains("Underlined") && run.formatting.underlined));
+    assert!(runs
+        .iter()
+        .any(|run| run.text.contains("Bold") && run.formatting.bold && run.formatting.italic));
 
     let markdown = slides[0].convert_to_md().expect("render first slide");
     assert!(markdown.contains(
@@ -133,7 +156,9 @@ fn parses_title_and_run_formatting_from_real_pptx() {
 
 #[test]
 fn parses_bulleted_and_numbered_lists_from_real_pptx() {
-    let Some(slides) = parse_pptx_fixture() else { return; };
+    let Some(slides) = parse_pptx_fixture() else {
+        return;
+    };
     let list = slides[1]
         .elements
         .iter()
@@ -143,16 +168,29 @@ fn parses_bulleted_and_numbered_lists_from_real_pptx() {
         })
         .expect("list on second slide");
 
-    assert!(list.items.iter().any(|item| list_item_text(item).contains("First bullet") && !item.is_ordered));
-    assert!(list.items.iter().any(|item| list_item_text(item).contains("Nested bullet") && item.level == 1));
-    assert!(list.items.iter().any(|item| list_item_text(item).contains("First number") && item.is_ordered));
-    assert!(list.items.iter().any(|item| list_item_text(item).contains("Nested number") && item.level == 1 && item.is_ordered));
+    assert!(list
+        .items
+        .iter()
+        .any(|item| list_item_text(item).contains("First bullet") && !item.is_ordered));
+    assert!(list
+        .items
+        .iter()
+        .any(|item| list_item_text(item).contains("Nested bullet") && item.level == 1));
+    assert!(list
+        .items
+        .iter()
+        .any(|item| list_item_text(item).contains("First number") && item.is_ordered));
+    assert!(list
+        .items
+        .iter()
+        .any(|item| list_item_text(item).contains("Nested number")
+            && item.level == 1
+            && item.is_ordered));
     assert!(list.items.iter().any(|item| {
         list_item_text(item).contains("Link bullet")
-            && item
-                .runs
-                .iter()
-                .all(|run| run.link_target.as_deref() == Some("https://github.com/nilskruthoff/pptx-parser"))
+            && item.runs.iter().all(|run| {
+                run.link_target.as_deref() == Some("https://github.com/nilskruthoff/pptx-parser")
+            })
     }));
 
     let markdown = slides[1].convert_to_md().expect("render list markdown");
@@ -161,7 +199,9 @@ fn parses_bulleted_and_numbered_lists_from_real_pptx() {
 
 #[test]
 fn parses_formatted_table_from_real_pptx() {
-    let Some(slides) = parse_pptx_fixture() else { return; };
+    let Some(slides) = parse_pptx_fixture() else {
+        return;
+    };
     let table = slides[2]
         .elements
         .iter()
@@ -187,7 +227,9 @@ fn parses_formatted_table_from_real_pptx() {
 
 #[test]
 fn parses_grouped_text_sorting_and_empty_cells_from_real_pptx() {
-    let Some(slides) = parse_pptx_fixture() else { return; };
+    let Some(slides) = parse_pptx_fixture() else {
+        return;
+    };
 
     let grouped = slide_text(&slides[3]);
     assert!(grouped.contains("Grouped Heading"));

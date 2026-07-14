@@ -1,18 +1,18 @@
+mod constants;
 mod container;
 mod markdown;
 mod metadata;
-mod slide;
-mod types;
-mod constants;
 mod odp;
-pub mod parse_xml;
 pub mod parse_rels;
+pub mod parse_xml;
 mod parser_config;
 mod presentation;
+mod slide;
+mod types;
 
 pub use container::PptxContainer;
 pub use metadata::PresentationMetadata;
-pub use parser_config::{ParserConfig, ImageHandlingMode};
+pub use parser_config::{ImageHandlingMode, ParserConfig};
 pub use presentation::{PresentationContainer, PresentationFormat, PresentationSlideIterator};
 pub use slide::Slide;
 pub use types::*;

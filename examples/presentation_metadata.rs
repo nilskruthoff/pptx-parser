@@ -9,14 +9,13 @@ use std::path::Path;
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     let Some(input_path) = args.get(1) else {
-        eprintln!("Usage: cargo run --example presentation_metadata <presentation.pptx|presentation.odp>");
+        eprintln!(
+            "Usage: cargo run --example presentation_metadata <presentation.pptx|presentation.odp>"
+        );
         return Ok(());
     };
 
-    let container = PresentationContainer::open(
-        Path::new(input_path),
-        ParserConfig::default(),
-    )?;
+    let container = PresentationContainer::open(Path::new(input_path), ParserConfig::default())?;
     let metadata = container.metadata();
 
     println!("Format: {:?}", container.format());

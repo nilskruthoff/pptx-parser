@@ -35,7 +35,9 @@ fn text_from_slide(slide: &Slide) -> Vec<String> {
         .elements
         .iter()
         .filter_map(|element| match element {
-            SlideElement::Text(text, _) => Some(text.runs.iter().map(|run| run.text.as_str()).collect()),
+            SlideElement::Text(text, _) => {
+                Some(text.runs.iter().map(|run| run.text.as_str()).collect())
+            }
             _ => None,
         })
         .collect()
@@ -103,8 +105,13 @@ fn open_real_odp_fixture() -> Option<PresentationContainer> {
 
 #[test]
 fn exposes_and_renders_odp_metadata_once() {
-    let Some(mut container) = open_real_odp_fixture() else { return; };
-    assert_eq!(container.metadata().created_at.as_deref(), Some("2026-07-12T21:10:22.756411800"));
+    let Some(mut container) = open_real_odp_fixture() else {
+        return;
+    };
+    assert_eq!(
+        container.metadata().created_at.as_deref(),
+        Some("2026-07-12T21:10:22.756411800")
+    );
     let markdown = container.convert_to_md().expect("convert ODP presentation");
     assert!(markdown.starts_with("<!-- Presentation Metadata\n"));
     assert_eq!(markdown.matches("Presentation Metadata").count(), 1);
@@ -115,11 +122,21 @@ fn parses_heading_from_xml_fixture() {
     let xml = load_odp_xml_or_skip!("heading.xml");
     let document = Document::parse(std::str::from_utf8(&xml).unwrap()).unwrap();
     let mut elements = Vec::new();
-    let Some(styles) = styles() else { return; };
+    let Some(styles) = styles() else {
+        return;
+    };
 
-    parse_text_container(document.root_element(), ElementPosition::default(), &styles, &mut elements).unwrap();
+    parse_text_container(
+        document.root_element(),
+        ElementPosition::default(),
+        &styles,
+        &mut elements,
+    )
+    .unwrap();
 
-    let SlideElement::Text(text, _) = &elements[0] else { panic!("expected heading text"); };
+    let SlideElement::Text(text, _) = &elements[0] else {
+        panic!("expected heading text");
+    };
     assert_eq!(text.runs[0].text, "Heading\n");
     assert!(text.runs[0].formatting.bold);
 }
@@ -145,7 +162,9 @@ fn parses_hyperlink_from_odp_text_anchor() {
 fn parses_nested_list_from_xml_fixture() {
     let xml = load_odp_xml_or_skip!("list.xml");
     let document = Document::parse(std::str::from_utf8(&xml).unwrap()).unwrap();
-    let Some(styles) = styles() else { return; };
+    let Some(styles) = styles() else {
+        return;
+    };
 
     let list = parse_list(document.root_element(), &styles, 0);
 
@@ -160,8 +179,13 @@ fn parses_formatted_table_from_xml_fixture() {
     let xml = load_odp_xml_or_skip!("table.xml");
     let document = Document::parse(std::str::from_utf8(&xml).unwrap()).unwrap();
     let table_node = document.root_element();
-    let header_row = table_node.children().find(|node| is_element(*node, TABLE_NS, "table-row")).unwrap();
-    let Some(styles) = styles() else { return; };
+    let header_row = table_node
+        .children()
+        .find(|node| is_element(*node, TABLE_NS, "table-row"))
+        .unwrap();
+    let Some(styles) = styles() else {
+        return;
+    };
 
     let row = parse_table_row(header_row, &styles);
     assert_eq!(row.cells.len(), 3);
@@ -177,29 +201,54 @@ fn parses_formatted_table_from_xml_fixture() {
 fn parses_complete_content_xml_fixture() {
     let xml = load_odp_xml_or_skip!("content.xml");
     let document = Document::parse(std::str::from_utf8(&xml).unwrap()).unwrap();
-    let page = presentation_pages(&document).next().expect("presentation page");
-    let Some(styles) = styles() else { return; };
+    let page = presentation_pages(&document)
+        .next()
+        .expect("presentation page");
+    let Some(styles) = styles() else {
+        return;
+    };
 
     let elements = parse_page(page, &styles).unwrap();
 
-    assert!(elements.iter().any(|element| matches!(element,SlideElement::Text(_, ElementPosition { x: 360_000, y: 720_000 }))));
-    assert!(elements.iter().any(|element| matches!(element, SlideElement::List(_, _))));
-    assert!(elements.iter().any(|element| matches!(element, SlideElement::Table(_, _))));
+    assert!(elements.iter().any(|element| matches!(
+        element,
+        SlideElement::Text(
+            _,
+            ElementPosition {
+                x: 360_000,
+                y: 720_000
+            }
+        )
+    )));
+    assert!(elements
+        .iter()
+        .any(|element| matches!(element, SlideElement::List(_, _))));
+    assert!(elements
+        .iter()
+        .any(|element| matches!(element, SlideElement::Table(_, _))));
 }
 
 #[test]
 fn parses_real_odp_fixture_and_preserves_slide_order() {
-    let Some(mut container) = open_real_odp_fixture() else { return; };
+    let Some(mut container) = open_real_odp_fixture() else {
+        return;
+    };
 
     assert_eq!(container.format(), PresentationFormat::Odp);
     let slides = container.parse_all().expect("parse ODP fixture");
 
     assert_eq!(slides.len(), 7);
-    assert!(text_from_slide(&slides[0]).join("\n").contains("ODP Parser Fixture"));
+    assert!(text_from_slide(&slides[0])
+        .join("\n")
+        .contains("ODP Parser Fixture"));
     assert!(text_from_slide(&slides[1]).join("\n").contains("Lists"));
     assert!(text_from_slide(&slides[2]).join("\n").contains("Tables"));
-    assert!(text_from_slide(&slides[3]).join("\n").contains("Grouped elements"));
-    assert!(text_from_slide(&slides[4]).join("\n").contains("Sorting and empty content"));
+    assert!(text_from_slide(&slides[3])
+        .join("\n")
+        .contains("Grouped elements"));
+    assert!(text_from_slide(&slides[4])
+        .join("\n")
+        .contains("Sorting and empty content"));
     assert_eq!(speaker_note_text(&slides[5]), "Speaker notes\n");
     assert_eq!(comment_text(&slides[5]), "Comment\n");
     assert!(text_from_slide(&slides[6]).join("\n").contains("Image"));
@@ -207,7 +256,9 @@ fn parses_real_odp_fixture_and_preserves_slide_order() {
 
 #[test]
 fn parses_title_and_run_formatting_from_real_odp() {
-    let Some(mut container) = open_real_odp_fixture() else { return; };
+    let Some(mut container) = open_real_odp_fixture() else {
+        return;
+    };
     let slides = container.parse_all().expect("parse ODP fixture");
 
     let runs: Vec<_> = slides[0]
@@ -220,11 +271,23 @@ fn parses_title_and_run_formatting_from_real_odp() {
         .flatten()
         .collect();
 
-    assert!(runs.iter().any(|run| run.text.contains("ODP Parser Fixture")));
-    assert!(runs.iter().any(|run| run.text.contains("Bold text") && run.formatting.bold));
-    assert!(runs.iter().any(|run| run.text.contains("Italic text") && run.formatting.italic));
-    assert!(runs.iter().any(|run| run.text.contains("Underlined text") && run.formatting.underlined));
-    assert!(runs.iter().any(|run| run.text.contains("Bold and italic text") && run.formatting.bold && run.formatting.italic));
+    assert!(runs
+        .iter()
+        .any(|run| run.text.contains("ODP Parser Fixture")));
+    assert!(runs
+        .iter()
+        .any(|run| run.text.contains("Bold text") && run.formatting.bold));
+    assert!(runs
+        .iter()
+        .any(|run| run.text.contains("Italic text") && run.formatting.italic));
+    assert!(runs
+        .iter()
+        .any(|run| run.text.contains("Underlined text") && run.formatting.underlined));
+    assert!(runs
+        .iter()
+        .any(|run| run.text.contains("Bold and italic text")
+            && run.formatting.bold
+            && run.formatting.italic));
 
     let markdown = slides[0].convert_to_md().expect("render first ODP slide");
     assert!(markdown.contains(
@@ -234,7 +297,9 @@ fn parses_title_and_run_formatting_from_real_odp() {
 
 #[test]
 fn parses_bulleted_and_numbered_lists_from_real_odp() {
-    let Some(mut container) = open_real_odp_fixture() else { return; };
+    let Some(mut container) = open_real_odp_fixture() else {
+        return;
+    };
     let slides = container.parse_all().expect("parse ODP fixture");
 
     let lists: Vec<_> = slides[1]
@@ -247,12 +312,30 @@ fn parses_bulleted_and_numbered_lists_from_real_odp() {
         .collect();
 
     let items: Vec<_> = lists.iter().flat_map(|list| list.items.iter()).collect();
-    assert!(items.iter().any(|item| item.runs.iter().any(|run| run.text.contains("First bullet")) && !item.is_ordered));
-    assert!(items.iter().any(|item| item.runs.iter().any(|run| run.text.contains("Nested bullet")) && item.level == 1));
-    assert!(items.iter().any(|item| item.runs.iter().any(|run| run.text.contains("First number")) && item.is_ordered));
-    assert!(items.iter().any(|item| item.runs.iter().any(|run| run.text.contains("Nested number")) && item.level == 1));
-    assert!(items.iter().any(|item| item.runs.iter().any(|run| run.text.contains("Link bullet")
-        && run.link_target.as_deref() == Some("https://github.com/nilskruthoff/pptx-parser"))));
+    assert!(items.iter().any(|item| item
+        .runs
+        .iter()
+        .any(|run| run.text.contains("First bullet"))
+        && !item.is_ordered));
+    assert!(items.iter().any(|item| item
+        .runs
+        .iter()
+        .any(|run| run.text.contains("Nested bullet"))
+        && item.level == 1));
+    assert!(items.iter().any(|item| item
+        .runs
+        .iter()
+        .any(|run| run.text.contains("First number"))
+        && item.is_ordered));
+    assert!(items.iter().any(|item| item
+        .runs
+        .iter()
+        .any(|run| run.text.contains("Nested number"))
+        && item.level == 1));
+    assert!(items.iter().any(
+        |item| item.runs.iter().any(|run| run.text.contains("Link bullet")
+            && run.link_target.as_deref() == Some("https://github.com/nilskruthoff/pptx-parser"))
+    ));
 
     let markdown = slides[1].convert_to_md().expect("render list markdown");
     assert!(markdown.contains("[Link bullet](https://github.com/nilskruthoff/pptx-parser)"));

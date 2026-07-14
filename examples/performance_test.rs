@@ -1,4 +1,4 @@
-﻿//! Performance benchmark example for the pptx-to-md crate
+//! Performance benchmark example for the pptx-to-md crate
 //!
 //! This example measures and compares the performance of different parsing approaches:
 //! - Single-threaded parsing
@@ -73,7 +73,9 @@ fn main() -> Result<()> {
     let pptx_path = if args.len() > 1 {
         &args[1]
     } else {
-        eprintln!("Usage: cargo run --example performance_test <path/to/presentation.pptx> [iterations]");
+        eprintln!(
+            "Usage: cargo run --example performance_test <path/to/presentation.pptx> [iterations]"
+        );
         return Ok(());
     };
 
@@ -83,10 +85,11 @@ fn main() -> Result<()> {
         10 // Default to 10 iterations
     };
 
-    println!("Performance testing with {} iterations on: {}", iterations, pptx_path);
+    println!(
+        "Performance testing with {} iterations on: {}",
+        iterations, pptx_path
+    );
 
-    
-    
     // =========== Single-threaded Approach ===========
     let mut single_thread_bench = Benchmark::new("Single-threaded parsing");
 
@@ -97,22 +100,23 @@ fn main() -> Result<()> {
 
         // Measure container creation
         let mut container = single_thread_bench.measure(|| {
-            let config = ParserConfig::builder()
-                .extract_images(true)
-                .build();
+            let config = ParserConfig::builder().extract_images(true).build();
             PptxContainer::open(Path::new(pptx_path), config).expect("Failed to open PPTX")
         });
 
-        println!("  Found {} slides in the presentation", container.slide_count);
+        println!(
+            "  Found {} slides in the presentation",
+            container.slide_count
+        );
 
         // Measure parsing
-        let slides = single_thread_bench.measure(|| {
-            container.parse_all().expect("Failed to parse slides")
-        });
+        let slides =
+            single_thread_bench.measure(|| container.parse_all().expect("Failed to parse slides"));
 
         // Measure conversion
         let _md_content = single_thread_bench.measure(|| {
-            slides.iter()
+            slides
+                .iter()
                 .filter_map(|slide| slide.convert_to_md())
                 .collect::<Vec<String>>()
         });
@@ -121,9 +125,10 @@ fn main() -> Result<()> {
     }
 
     single_thread_bench.report();
-    println!("Average slides per presentation: {}", total_slides / iterations);
-
-
+    println!(
+        "Average slides per presentation: {}",
+        total_slides / iterations
+    );
 
     // =========== Single-threaded Streamed Approach ===========
     let mut single_thread_streamed_bench = Benchmark::new("Single-threaded streamed parsing");
@@ -135,13 +140,14 @@ fn main() -> Result<()> {
 
         // Measure container creation
         let mut container = single_thread_streamed_bench.measure(|| {
-            let config = ParserConfig::builder()
-                .extract_images(true)
-                .build();
+            let config = ParserConfig::builder().extract_images(true).build();
             PptxContainer::open(Path::new(pptx_path), config).expect("Failed to open PPTX")
         });
 
-        println!("  Found {} slides in the presentation", container.slide_count);
+        println!(
+            "  Found {} slides in the presentation",
+            container.slide_count
+        );
 
         // Zähle die Slides im Voraus für die statistische Auswertung
         let expected_slides = container.slide_count;
@@ -157,7 +163,7 @@ fn main() -> Result<()> {
                         // Konvertiere den Slide zu Markdown
                         let _md_content = slide.convert_to_md();
                         processed += 1;
-                    },
+                    }
                     Err(e) => {
                         eprintln!("Error processing slide: {:?}", e);
                     }
@@ -167,14 +173,18 @@ fn main() -> Result<()> {
             processed
         });
 
-        println!("  Processed {} out of {} slides", slides_processed, expected_slides);
+        println!(
+            "  Processed {} out of {} slides",
+            slides_processed, expected_slides
+        );
         total_slides += slides_processed;
     }
 
     single_thread_streamed_bench.report();
-    println!("Average slides per presentation: {}", total_slides / iterations);
-
-
+    println!(
+        "Average slides per presentation: {}",
+        total_slides / iterations
+    );
 
     // =========== Optimized Multi-threaded Approach ===========
     let mut optimized_multi_thread_bench = Benchmark::new("Optimized Multi-threaded parsing");
@@ -186,24 +196,28 @@ fn main() -> Result<()> {
 
         // Container öffnen mit der gewünschten Konfiguration
         let mut container = optimized_multi_thread_bench.measure(|| {
-            let config = ParserConfig::builder()
-                .extract_images(true)
-                .build();
+            let config = ParserConfig::builder().extract_images(true).build();
             PptxContainer::open(Path::new(pptx_path), config).expect("Failed to open PPTX")
         });
 
-        println!("  Found {} slides in the presentation", container.slide_count);
+        println!(
+            "  Found {} slides in the presentation",
+            container.slide_count
+        );
 
         // Verwende die neue optimierte Multi-Threading-Methode
         let slides = optimized_multi_thread_bench.measure(|| {
-            container.parse_all_multi_threaded().expect("Failed to parse slides")
+            container
+                .parse_all_multi_threaded()
+                .expect("Failed to parse slides")
         });
 
         println!("  Successfully processed {} slides", slides.len());
 
         // Parallel zu Markdown konvertieren (bleibt unverändert)
         let _md_content = optimized_multi_thread_bench.measure(|| {
-            slides.par_iter()
+            slides
+                .par_iter()
                 .filter_map(|slide| slide.convert_to_md())
                 .collect::<Vec<String>>()
         });
@@ -212,55 +226,90 @@ fn main() -> Result<()> {
     }
 
     optimized_multi_thread_bench.report();
-    println!("Average slides per presentation: {}", total_slides / iterations);
+    println!(
+        "Average slides per presentation: {}",
+        total_slides / iterations
+    );
 
     // =========== Performance Comparison ===========
-    if !single_thread_bench.results.is_empty() &&
-        !single_thread_streamed_bench.results.is_empty() &&
-        !optimized_multi_thread_bench.results.is_empty() {
-
-        let single_avg: Duration = single_thread_bench.results.iter().sum::<Duration>() /
-            single_thread_bench.results.len() as u32;
-        let single_streamed_avg: Duration = single_thread_streamed_bench.results.iter().sum::<Duration>() /
-            single_thread_streamed_bench.results.len() as u32;
-        let optimized_multi_avg: Duration = optimized_multi_thread_bench.results.iter().sum::<Duration>() /
-            optimized_multi_thread_bench.results.len() as u32;
+    if !single_thread_bench.results.is_empty()
+        && !single_thread_streamed_bench.results.is_empty()
+        && !optimized_multi_thread_bench.results.is_empty()
+    {
+        let single_avg: Duration = single_thread_bench.results.iter().sum::<Duration>()
+            / single_thread_bench.results.len() as u32;
+        let single_streamed_avg: Duration = single_thread_streamed_bench
+            .results
+            .iter()
+            .sum::<Duration>()
+            / single_thread_streamed_bench.results.len() as u32;
+        let optimized_multi_avg: Duration = optimized_multi_thread_bench
+            .results
+            .iter()
+            .sum::<Duration>()
+            / optimized_multi_thread_bench.results.len() as u32;
 
         println!("\nPerformance Comparison");
         println!("=====================");
         println!("Single-threaded average: {:?}", single_avg);
-        println!("Single-threaded streaming average: {:?}", single_streamed_avg);
-        println!("Optimized multi-threaded average: {:?}", optimized_multi_avg);
+        println!(
+            "Single-threaded streaming average: {:?}",
+            single_streamed_avg
+        );
+        println!(
+            "Optimized multi-threaded average: {:?}",
+            optimized_multi_avg
+        );
 
         // Compare single-threaded vs single-threaded streaming
         if single_avg > single_streamed_avg {
             let speedup = single_avg.as_secs_f64() / single_streamed_avg.as_secs_f64();
-            println!("Single-threaded streaming is {:.2}x faster than single-threaded", speedup);
+            println!(
+                "Single-threaded streaming is {:.2}x faster than single-threaded",
+                speedup
+            );
         } else {
             let slowdown = single_streamed_avg.as_secs_f64() / single_avg.as_secs_f64();
-            println!("Single-threaded streaming is {:.2}x slower than single-threaded", slowdown);
+            println!(
+                "Single-threaded streaming is {:.2}x slower than single-threaded",
+                slowdown
+            );
         }
 
         // Compare single-threaded vs optimized multithreaded
         if single_avg > optimized_multi_avg {
             let speedup = single_avg.as_secs_f64() / optimized_multi_avg.as_secs_f64();
-            println!("Optimized multi-threaded is {:.2}x faster than single-threaded", speedup);
+            println!(
+                "Optimized multi-threaded is {:.2}x faster than single-threaded",
+                speedup
+            );
         } else {
             let slowdown = optimized_multi_avg.as_secs_f64() / single_avg.as_secs_f64();
-            println!("Optimized multi-threaded is {:.2}x slower than single-threaded", slowdown);
+            println!(
+                "Optimized multi-threaded is {:.2}x slower than single-threaded",
+                slowdown
+            );
         }
 
         // Compare single-threaded streaming vs optimized multithreaded
         if single_streamed_avg > optimized_multi_avg {
             let speedup = single_streamed_avg.as_secs_f64() / optimized_multi_avg.as_secs_f64();
-            println!("Optimized multi-threaded is {:.2}x faster than single-threaded streaming", speedup);
+            println!(
+                "Optimized multi-threaded is {:.2}x faster than single-threaded streaming",
+                speedup
+            );
         } else {
             let slowdown = optimized_multi_avg.as_secs_f64() / single_streamed_avg.as_secs_f64();
-            println!("Optimized multi-threaded is {:.2}x slower than single-threaded streaming", slowdown);
+            println!(
+                "Optimized multi-threaded is {:.2}x slower than single-threaded streaming",
+                slowdown
+            );
         }
 
         // Determine the overall fastest approach
-        let fastest_approach = if single_avg <= single_streamed_avg && single_avg <= optimized_multi_avg {
+        let fastest_approach = if single_avg <= single_streamed_avg
+            && single_avg <= optimized_multi_avg
+        {
             "Single-threaded"
         } else if single_streamed_avg <= single_avg && single_streamed_avg <= optimized_multi_avg {
             "Single-threaded streaming"
@@ -268,7 +317,10 @@ fn main() -> Result<()> {
             "Optimized multi-threaded"
         };
 
-        println!("\nOverall result: {} approach is the fastest for this workload.", fastest_approach);
+        println!(
+            "\nOverall result: {} approach is the fastest for this workload.",
+            fastest_approach
+        );
     }
 
     Ok(())

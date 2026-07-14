@@ -35,7 +35,9 @@ fn create_presentation_archive(path: &Path, files: Vec<(String, Vec<u8>)>) {
     let mut archive = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default();
     for (name, bytes) in files {
-        archive.start_file(name, options).expect("add presentation entry");
+        archive
+            .start_file(name, options)
+            .expect("add presentation entry");
         archive.write_all(&bytes).expect("write presentation entry");
     }
     archive.finish().expect("finish presentation fixture");
@@ -60,7 +62,10 @@ fn parses_odp_tables_lists_and_text_formatting() {
     create_presentation_archive(
         &path,
         vec![
-            ("mimetype".to_string(), b"application/vnd.oasis.opendocument.presentation".to_vec()),
+            (
+                "mimetype".to_string(),
+                b"application/vnd.oasis.opendocument.presentation".to_vec(),
+            ),
             ("content.xml".to_string(), content.as_bytes().to_vec()),
             ("Pictures/image.bin".to_string(), vec![1, 2, 3]),
         ],
@@ -75,31 +80,50 @@ fn parses_odp_tables_lists_and_text_formatting() {
     assert_eq!(container.format(), PresentationFormat::Odp);
     let slide = container.parse_all().unwrap().pop().unwrap();
 
-    let text = slide.elements.iter().find_map(|element| match element {
-        SlideElement::Text(text, position) => Some((text, position)),
-        _ => None,
-    }).unwrap();
-    assert!(text.0.runs.iter().any(|run| run.text.contains("Bold text") && run.formatting.bold));
+    let text = slide
+        .elements
+        .iter()
+        .find_map(|element| match element {
+            SlideElement::Text(text, position) => Some((text, position)),
+            _ => None,
+        })
+        .unwrap();
+    assert!(text
+        .0
+        .runs
+        .iter()
+        .any(|run| run.text.contains("Bold text") && run.formatting.bold));
     assert_eq!(text.1.x, 360_000);
     assert_eq!(text.1.y, 720_000);
 
-    let list = slide.elements.iter().find_map(|element| match element {
-        SlideElement::List(list, _) => Some(list),
-        _ => None,
-    }).unwrap();
+    let list = slide
+        .elements
+        .iter()
+        .find_map(|element| match element {
+            SlideElement::List(list, _) => Some(list),
+            _ => None,
+        })
+        .unwrap();
     assert_eq!(list.items.len(), 2);
     assert!(!list.items[0].is_ordered);
     assert_eq!(list.items[1].level, 1);
     assert!(list.items[1].is_ordered);
 
-    let table = slide.elements.iter().find_map(|element| match element {
-        SlideElement::Table(table, _) => Some(table),
-        _ => None,
-    }).unwrap();
+    let table = slide
+        .elements
+        .iter()
+        .find_map(|element| match element {
+            SlideElement::Table(table, _) => Some(table),
+            _ => None,
+        })
+        .unwrap();
     assert_eq!(table.rows.len(), 2);
     assert_eq!(table.rows[0].cells.len(), 2);
     assert_eq!(table.rows[1].cells.len(), 2);
-    assert_eq!(slide.image_data.get("Pictures/image.bin"), Some(&vec![1, 2, 3]));
+    assert_eq!(
+        slide.image_data.get("Pictures/image.bin"),
+        Some(&vec![1, 2, 3])
+    );
 
     fs::remove_file(path).unwrap();
 }
@@ -111,7 +135,10 @@ fn detects_pptx_without_changing_the_existing_pptx_api() {
         &path,
         vec![
             ("[Content_Types].xml".to_string(), b"<Types/>".to_vec()),
-            ("ppt/presentation.xml".to_string(), b"<p:presentation/>".to_vec()),
+            (
+                "ppt/presentation.xml".to_string(),
+                b"<p:presentation/>".to_vec(),
+            ),
         ],
     );
 

@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-07-14
+
+### Added
+
+- ODP support through `PresentationContainer`, including format detection and presentation metadata
+- Hyperlinks, optional speaker notes and comments, and context-aware Markdown escaping
+
+### Changed
+
+- Placeholder positions now inherit from slide layouts and master slides for stable element ordering
+- Test suite reorganized into unit and integration tests with dedicated fixtures
+
+### Breaking
+
+- Renamed `ParserConfig::include_slide_comment` to `include_slide_number_as_comment`; public struct literals must include the new `Run`, `Slide`, and `ParserConfig` fields
+- `Slide::new` now accepts speaker notes and comments; `PptxContainer::get_full_image_path` was replaced by `resolve_target_path`
+
+---
+
 ## [0.4.0] - 2025-07-01
 
 ### Added

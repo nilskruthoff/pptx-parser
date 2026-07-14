@@ -17,7 +17,10 @@ pub fn parse_relationships(xml_data: &[u8]) -> Result<Vec<Relationship>> {
     let root = doc.root_element();
 
     let mut relationships = Vec::new();
-    for rel in root.children().filter(|n| n.is_element() && n.tag_name().name() == "Relationship") {
+    for rel in root
+        .children()
+        .filter(|n| n.is_element() && n.tag_name().name() == "Relationship")
+    {
         if let (Some(id), Some(rel_type), Some(target)) = (
             rel.attribute("Id"),
             rel.attribute("Type"),

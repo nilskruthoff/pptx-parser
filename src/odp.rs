@@ -1,8 +1,9 @@
+use crate::metadata::{parse_odp_metadata, render_presentation_markdown};
 use crate::{
     ElementPosition, Error, Formatting, ImageReference, ListElement, ListItem, ParserConfig,
-    PresentationMetadata, Result, Run, Slide, SlideElement, TableCell, TableElement, TableRow, TextElement,
+    PresentationMetadata, Result, Run, Slide, SlideElement, TableCell, TableElement, TableRow,
+    TextElement,
 };
-use crate::metadata::{parse_odp_metadata, render_presentation_markdown};
 use roxmltree::{Document, Node};
 use std::collections::HashMap;
 use std::io::Read;
@@ -53,11 +54,17 @@ impl OdpContainer {
             .collect()
     }
 
-    pub(crate) fn metadata(&self) -> &PresentationMetadata { &self.metadata }
+    pub(crate) fn metadata(&self) -> &PresentationMetadata {
+        &self.metadata
+    }
 
     pub(crate) fn convert_to_md(&mut self) -> Result<String> {
         let slides = self.parse_all()?;
-        render_presentation_markdown(&self.metadata, self.config.include_presentation_metadata, slides)
+        render_presentation_markdown(
+            &self.metadata,
+            self.config.include_presentation_metadata,
+            slides,
+        )
     }
 
     fn load_slide(&mut self, index: usize) -> Result<Slide> {
@@ -132,7 +139,10 @@ fn read_archive_file(archive: &mut zip::ZipArchive<std::fs::File>, path: &str) -
     Ok(bytes)
 }
 
-fn read_optional_archive_file(archive: &mut zip::ZipArchive<std::fs::File>, path: &str) -> Result<Option<Vec<u8>>> {
+fn read_optional_archive_file(
+    archive: &mut zip::ZipArchive<std::fs::File>,
+    path: &str,
+) -> Result<Option<Vec<u8>>> {
     let mut file = match archive.by_name(path) {
         Ok(file) => file,
         Err(zip::result::ZipError::FileNotFound) => return Ok(None),
@@ -281,16 +291,16 @@ impl StyleResolver {
 }
 
 fn parse_formatting_properties(node: Node<'_, '_>) -> PartialFormatting {
-    let mut formatting = PartialFormatting::default();
-    formatting.bold = node.attribute((FO_NS, "font-weight")).map(is_enabled);
-    formatting.italic = node
-        .attribute((FO_NS, "font-style"))
-        .map(|value| value.eq_ignore_ascii_case("italic"));
-    formatting.underlined = node
-        .attribute((STYLE_NS, "text-underline-style"))
-        .map(|value| !value.eq_ignore_ascii_case("none"));
-    formatting.lang = node.attribute((FO_NS, "language")).map(str::to_string);
-    formatting
+    PartialFormatting {
+        bold: node.attribute((FO_NS, "font-weight")).map(is_enabled),
+        italic: node
+            .attribute((FO_NS, "font-style"))
+            .map(|value| value.eq_ignore_ascii_case("italic")),
+        underlined: node
+            .attribute((STYLE_NS, "text-underline-style"))
+            .map(|value| !value.eq_ignore_ascii_case("none")),
+        lang: node.attribute((FO_NS, "language")).map(str::to_string),
+    }
 }
 
 fn is_enabled(value: &str) -> bool {
