@@ -381,3 +381,7 @@ fn append_quoted_section(output: &mut String, title: &str, elements: &[crate::Te
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/slide.rs"]
+mod tests;

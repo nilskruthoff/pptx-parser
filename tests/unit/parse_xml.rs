@@ -1,12 +1,14 @@
 ﻿    use super::*;
+    // XML parser unit fixtures.
     use std::fs;
     use std::path::PathBuf;
 
     fn load_xml(filename: &str) -> Option<String> {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         path.push("tests");
-        path.push("test_data");
-        path.push("xml");
+        path.push("fixtures");
+        path.push("unit");
+        path.push("ooxml");
         path.push(filename);
         fs::read_to_string(path).ok()
     }

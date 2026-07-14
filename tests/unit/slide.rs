@@ -1,7 +1,6 @@
-use pptx_to_md::ImageReference;
-use pptx_to_md::{
-    ElementPosition, Formatting, ListElement, ListItem, ParserConfig, Run, Slide, SlideElement,
-    TableCell, TableElement, TableRow, TextElement,
+use super::*;
+use crate::{
+    Formatting, ListElement, ListItem, Run, TableCell, TableElement, TableRow, TextElement,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -10,7 +9,9 @@ use std::path::PathBuf;
 fn load_test_data(filename: &str) -> String {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("tests");
-    path.push("test_data");
+    path.push("fixtures");
+    path.push("unit");
+    path.push("markdown");
     path.push(filename);
     fs::read_to_string(path).expect("Unable to read test data file")
 }
@@ -18,7 +19,9 @@ fn load_test_data(filename: &str) -> String {
 fn load_binary_test_data(filename: &str) -> Vec<u8> {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("tests");
-    path.push("test_data");
+    path.push("fixtures");
+    path.push("unit");
+    path.push("media");
     path.push(filename);
     fs::read(path).expect("Unable to read test data file")
 }

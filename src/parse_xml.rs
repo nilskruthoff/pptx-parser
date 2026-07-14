@@ -880,5 +880,5 @@ fn insert_placeholder_position(
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/parse_xml_tests.rs"]
+#[path = "../tests/unit/parse_xml.rs"]
 mod tests;
