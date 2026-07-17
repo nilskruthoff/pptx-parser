@@ -5,7 +5,7 @@
 //!
 //! Run with: cargo run --example slide_elements <path/to/your/presentation.pptx>
 
-use pptx_to_md::{ParserConfig, PptxContainer, Result, SlideElement};
+use pptx_to_md::{ParserConfig, PptxContainer, Result, SlideBlockContent};
 use std::env;
 use std::path::Path;
 
@@ -32,28 +32,24 @@ fn main() -> Result<()> {
         match slide_result {
             Ok(slide) => {
                 println!(
-                    "Processing slide {} ({} elements)",
+                    "Processing slide {} ({} semantic blocks)",
                     slide.slide_number,
-                    slide.elements.len()
+                    slide.blocks.len()
                 );
 
-                // iterate over each slide element and match them to add custom logic
-                for element in &slide.elements {
-                    match element {
-                        SlideElement::Text(text, pos) => {
-                            println!("{:?}\t{:?}\n", text, pos)
+                for block in &slide.blocks {
+                    match &block.content {
+                        SlideBlockContent::Text(text) => {
+                            println!("{:?}\t{:?}\n", text, block.bounds)
                         }
-                        SlideElement::Table(table, pos) => {
-                            println!("{:?}\t{:?}\n", table, pos)
+                        SlideBlockContent::Table(table) => {
+                            println!("{:?}\t{:?}\n", table, block.bounds)
                         }
-                        SlideElement::Image(image, pos) => {
-                            println!("{:?}\t{:?}\n", image, pos)
+                        SlideBlockContent::Image(image) => {
+                            println!("{:?}\t{:?}\n", image, block.bounds)
                         }
-                        SlideElement::List(list, pos) => {
-                            println!("{:?}\t{:?}\n", list, pos)
-                        }
-                        SlideElement::Unknown => {
-                            println!("An Unknown element was found.\n")
+                        SlideBlockContent::Unsupported(unsupported) => {
+                            println!("Unsupported: {:?}\n", unsupported)
                         }
                     }
                 }

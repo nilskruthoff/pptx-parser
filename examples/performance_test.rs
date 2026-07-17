@@ -117,7 +117,7 @@ fn main() -> Result<()> {
         let _md_content = single_thread_bench.measure(|| {
             slides
                 .iter()
-                .filter_map(|slide| slide.convert_to_md())
+                .filter_map(|slide| slide.convert_to_md().ok())
                 .collect::<Vec<String>>()
         });
 
@@ -218,7 +218,7 @@ fn main() -> Result<()> {
         let _md_content = optimized_multi_thread_bench.measure(|| {
             slides
                 .par_iter()
-                .filter_map(|slide| slide.convert_to_md())
+                .filter_map(|slide| slide.convert_to_md().ok())
                 .collect::<Vec<String>>()
         });
 

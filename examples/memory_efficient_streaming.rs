@@ -44,11 +44,10 @@ fn main() -> Result<()> {
                     slide.elements.len()
                 );
 
-                if let Some(md_content) = slide.convert_to_md() {
-                    let output_path = format!("{}/slide_{}.md", output_dir, slide.slide_number);
-                    fs::write(&output_path, md_content)?;
-                    println!("Saved slide {} to {}", slide.slide_number, output_path);
-                }
+                let md_content = slide.convert_to_md()?;
+                let output_path = format!("{}/slide_{}.md", output_dir, slide.slide_number);
+                fs::write(&output_path, md_content)?;
+                println!("Saved slide {} to {}", slide.slide_number, output_path);
             }
             Err(e) => {
                 eprintln!("Error processing slide: {:?}", e);

@@ -44,9 +44,7 @@ fn main() -> Result<()> {
 
     // Convert each slide to Markdown and save the images automatically
     for slide in slides {
-        if let Some(md_content) = slide.convert_to_md() {
-            writeln!(md_file, "{}", md_content).expect("Couldn't write to file");
-        }
+        writeln!(md_file, "{}", slide.convert_to_md()?).expect("Couldn't write to file");
     }
 
     println!("All slides converted successfully!");
