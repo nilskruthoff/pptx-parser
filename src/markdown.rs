@@ -1,4 +1,4 @@
-use crate::Run;
+use crate::{Baseline, Run};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MarkdownContext {
@@ -230,11 +230,39 @@ fn render_fragment(run: &Run, escaped_text: &str) -> String {
         result = format!("<u>{result}</u>");
     }
 
+    if run.formatting.strikethrough {
+        result = format!("~~{result}~~");
+    }
+
+    result = match run.formatting.baseline {
+        Baseline::Normal => result,
+        Baseline::Superscript => format!("<sup>{result}</sup>"),
+        Baseline::Subscript => format!("<sub>{result}</sub>"),
+    };
+
     if let Some(target) = &run.link_target {
-        result = format!("[{result}]({target})");
+        result = format!("[{result}]({})", markdown_link_destination(target));
     }
 
     format!("{leading_whitespace}{result}{trailing_whitespace}")
+}
+
+fn markdown_link_destination(target: &str) -> String {
+    if target
+        .chars()
+        .any(|character| character.is_whitespace() || matches!(character, '(' | ')' | '<' | '>'))
+    {
+        format!(
+            "<{}>",
+            target
+                .replace('<', "%3C")
+                .replace('>', "%3E")
+                .replace('\n', "%0A")
+                .replace('\r', "%0D")
+        )
+    } else {
+        target.to_string()
+    }
 }
 
 fn render_group(output: &mut String, run: &Run, escaped_text: &str) {
@@ -254,6 +282,8 @@ fn has_same_markdown_style(left: &Run, right: &Run) -> bool {
     left.formatting.bold == right.formatting.bold
         && left.formatting.italic == right.formatting.italic
         && left.formatting.underlined == right.formatting.underlined
+        && left.formatting.strikethrough == right.formatting.strikethrough
+        && left.formatting.baseline == right.formatting.baseline
         && left.link_target == right.link_target
 }
 
