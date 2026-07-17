@@ -1,7 +1,10 @@
+use crate::Result;
 use crate::constants::IMAGE_NAMESPACE;
 use crate::types::ImageReference;
-use crate::{Error, Result};
-use roxmltree::Document;
+use crate::xml::{attr, element_is, event, reader};
+use quick_xml::events::Event;
+
+const RELATIONSHIPS_NS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Relationship {
@@ -12,29 +15,47 @@ pub struct Relationship {
 
 /// Parses package relationship (`.rels`) XML data and extracts all relationships.
 pub fn parse_relationships(xml_data: &[u8]) -> Result<Vec<Relationship>> {
-    let xml_str = std::str::from_utf8(xml_data).map_err(|_| Error::Unknown)?;
-    let doc = Document::parse(xml_str)?;
-    let root = doc.root_element();
-
+    let mut xml = reader(xml_data);
     let mut relationships = Vec::new();
-    for rel in root
-        .children()
-        .filter(|n| n.is_element() && n.tag_name().name() == "Relationship")
-    {
-        if let (Some(id), Some(rel_type), Some(target)) = (
-            rel.attribute("Id"),
-            rel.attribute("Type"),
-            rel.attribute("Target"),
-        ) {
-            relationships.push(Relationship {
-                id: id.to_string(),
-                rel_type: rel_type.to_string(),
-                target: target.to_string(),
-            });
+    let mut depth = 0usize;
+    loop {
+        match event(&mut xml, "relationships")? {
+            Event::Start(element) => {
+                depth += 1;
+                if element_is(&xml, &element, RELATIONSHIPS_NS, b"Relationship") {
+                    push_relationship(&element, &mut relationships);
+                }
+            }
+            Event::Empty(element)
+                if element_is(&xml, &element, RELATIONSHIPS_NS, b"Relationship") =>
+            {
+                push_relationship(&element, &mut relationships);
+            }
+            Event::End(_) if depth > 0 => depth -= 1,
+            Event::Eof if depth > 0 => {
+                return Err(crate::Error::ParseError(
+                    "Unexpected end of relationships XML",
+                ));
+            }
+            Event::Eof => break,
+            _ => {}
         }
     }
-
     Ok(relationships)
+}
+
+fn push_relationship(element: &quick_xml::events::BytesStart<'_>, out: &mut Vec<Relationship>) {
+    if let (Some(id), Some(rel_type), Some(target)) = (
+        attr(element, b"Id"),
+        attr(element, b"Type"),
+        attr(element, b"Target"),
+    ) {
+        out.push(Relationship {
+            id,
+            rel_type,
+            target,
+        });
+    }
 }
 
 /// Parses relationship (`.rels`) XML data from a PPTX slide, extracting image references.
