@@ -1,9 +1,11 @@
-﻿# pptx-to-md
-
-[![Crates.io](https://img.shields.io/crates/v/pptx-to-md.svg)](https://crates.io/crates/pptx-to-md)
+﻿[![Crates.io](https://img.shields.io/crates/v/pptx-to-md.svg)](https://crates.io/crates/pptx-to-md)
 [![tests](https://github.com/nilskruthoff/pptx-parser/actions/workflows/rust.yml/badge.svg)](https://github.com/nilskruthoff/pptx-parser/actions/workflows/rust.yml)
-[![Documentation](https://docs.rs/pptx-to-md/badge.svg)](https://docs.rs/pptx-to-md)
+[![codecov](https://codecov.io/gh/nilskruthoff/pptx-parser/branch/main/graph/badge.svg)](https://codecov.io/gh/nilskruthoff/pptx-parser)
 ![License](https://img.shields.io/crates/l/pptx-to-md.svg)
+[![dependency status](https://deps.rs/repo/github/nilskruthoff/pptx-parser/status.svg)](https://deps.rs/repo/github/nilskruthoff/pptx-parser)
+[![Documentation](https://docs.rs/pptx-to-md/badge.svg)](https://docs.rs/pptx-to-md)
+
+# pptx-to-md
 
 `pptx-to-md` is a library to parse Microsoft PowerPoint (`.pptx`) slides and convert them into structured Markdown content and data, making it easy to process, use, or integrate slide data programmatically.
 It also supports OpenDocument Presentation (`.odp`).
@@ -20,7 +22,7 @@ It also supports OpenDocument Presentation (`.odp`).
 - ⏱️ **Multithreading**: Optional support for multithreaded parsing of PowerPoint slides, with a significant performance increase for larger presentations.
 - ⚙️ **Robust & Safe APIs:** Designed according to Rust best practices with explicit error handling.
 - 🏷️ **Presentation Metadata:** Extracts common document properties from PPTX and ODP.
-- 🪄 **Embedding:** Used to provide pptx content and meta information in a form that is useful for embeddings
+- 🪄 **Embedding:** Used to provide pptx content and meta-information in a form that is useful for embeddings
 ---
 
 ## 👨‍💻 Example Usage
@@ -73,14 +75,16 @@ Use `PresentationContainer` when the input may be either `.pptx` or `.odp`:
 use pptx_to_md::{ParserConfig, PresentationContainer, PresentationFormat};
 use std::path::Path;
 
-let mut presentation = PresentationContainer::open(
-    Path::new("path/to/presentation.odp"),
-    ParserConfig::default(),
-)?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut presentation = PresentationContainer::open(
+        Path::new("path/to/presentation.odp"),
+        ParserConfig::default(),
+    )?;
 
-assert_eq!(presentation.format(), PresentationFormat::Odp);
-let slides = presentation.parse_all()?;
-# Ok::<(), pptx_to_md::Error>(())
+    assert_eq!(presentation.format(), PresentationFormat::Odp);
+    let slides = presentation.parse_all()?;
+    Ok(())
+}
 ```
 
 If the format is already known, use `open_as` to skip auto-detection:
@@ -89,14 +93,16 @@ If the format is already known, use `open_as` to skip auto-detection:
 use pptx_to_md::{ParserConfig, PresentationContainer, PresentationFormat};
 use std::path::Path;
 
-let mut presentation = PresentationContainer::open_as(
-    Path::new("path/to/presentation.pptx"),
-    ParserConfig::default(),
-    PresentationFormat::Pptx,
-)?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut presentation = PresentationContainer::open_as(
+        Path::new("path/to/presentation.pptx"),
+        ParserConfig::default(),
+        PresentationFormat::Pptx,
+    )?;
 
-let slides = presentation.parse_all()?;
-# Ok::<(), pptx_to_md::Error>(())
+    let slides = presentation.parse_all()?;
+    Ok(())
+}
 ```
 
 ---
