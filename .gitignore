@@ -198,3 +198,4 @@ rust-project.json
 
 # Android studio 3.1+ serialized cache file
 /.idea/inspectionProfiles/Project_Default.xml
+/lcov.info
