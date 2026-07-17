@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added a shared semantic document model for PPTX and ODP with presentations,
+  slides, positioned blocks, text roles, paragraphs, list metadata, tables,
+  images, and unsupported-content fallbacks
+- Added `PresentationContainer::parse_document()` for retrieving presentation
+  metadata, semantic slides, and aggregated parser diagnostics
+- Added configurable per-slide Markdown rendering through `MarkdownOptions`,
+  including source and spatial reading-order strategies
+- Added non-fatal `ParseDiagnostic` values for missing resources and content that
+  cannot yet be represented structurally
+- Added support for paragraph boundaries, hard line breaks, PowerPoint fields,
+  ordered-list start values, explicit list removal, strikethrough, superscript,
+  subscript, font sizes, image alternative text, and merged table cells
+- Added PPTX/ODP parity tests, semantic parser tests, missing-resource tests, and
+  additional unit coverage for configuration, presentation, slide, type, and XML
+  components
+- Added detailed architecture and migration documentation in
+  [`docs/SEMANTIC_MARKDOWN_CONVERSION.md`](docs/SEMANTIC_MARKDOWN_CONVERSION.md)
+
+### Changed
+
+- Replaced DOM-style slide, relationship, and ODP XML processing with
+  event-driven pull parsing to reduce intermediate allocations and preserve
+  document structure during parsing
+- Unified PPTX and ODP conversion around the same semantic block model before
+  rendering Markdown
+- Improved Markdown accuracy for titles, subtitles, headings, mixed list and
+  non-list paragraphs, nested lists, hyperlinks, images, and tables
+- Tables without merged cells continue to use GFM Markdown; tables containing
+  row or column spans now use an HTML fallback to preserve their structure
+- Missing image resources no longer discard the complete slide and are reported
+  through diagnostics instead
+- Image output now uses standard Markdown image syntax and propagates save or
+  filesystem failures
+- Preserved `Slide::elements` and existing container, streaming, and PPTX-only
+  APIs as transitional compatibility paths; new code should prefer
+  `Slide::blocks` or `PresentationContainer::parse_document()`
+
+### Fixed
+
+- Fixed inherited bullet styles overriding paragraphs that explicitly disable
+  bullets
+- Fixed mixed plain and list paragraphs being flattened into one list
+- Fixed loss of PPTX and ODP table-cell spans, image alternative text, and
+  locally inherited run formatting
+- Fixed unsafe or ambiguous Markdown link destinations containing whitespace or
+  parentheses
+
+### Breaking
+
+- `Slide::convert_to_md()` now returns `Result<String>` instead of
+  `Option<String>` so conversion and filesystem errors cannot be silently lost
+- Public `Slide`, `Formatting`, and table-cell struct literals must account for
+  the newly added semantic and formatting fields or use their constructors and
+  defaults
+
 ## [0.5.1] - 2026-07-14
 
 ### Changed
