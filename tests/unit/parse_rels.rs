@@ -40,9 +40,11 @@ fn parses_slide_relationships_with_images() {
 
 #[test]
 fn parses_empty_slide_relationships() {
-    assert!(parse_slide_rels(&load_xml("rels_without_images.xml"))
-        .unwrap()
-        .is_empty());
+    assert!(
+        parse_slide_rels(&load_xml("rels_without_images.xml"))
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -54,4 +56,12 @@ fn parses_hyperlink_relationships() {
         Some(&"https://example.com".to_string())
     );
     assert_eq!(hyperlinks.len(), 1);
+}
+
+#[test]
+fn rejects_unclosed_relationship_xml_and_unescapes_attributes() {
+    assert!(parse_relationships(b"<Relationships>").is_err());
+    let xml = br#"<r:Relationships xmlns:r="http://schemas.openxmlformats.org/package/2006/relationships"><r:Relationship Id="rId1" Type="link" Target="https://example.com/?a=1&amp;b=2"/></r:Relationships>"#;
+    let relationships = parse_relationships(xml).unwrap();
+    assert_eq!(relationships[0].target, "https://example.com/?a=1&b=2");
 }
