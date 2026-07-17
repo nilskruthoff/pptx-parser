@@ -1,6 +1,8 @@
-use super::*;
-use std::fs;
-use std::path::PathBuf;
+#[allow(unused_imports)]
+use {
+    super::*,
+    std::{fs, path::PathBuf}
+};
 
 fn fixture(name: &str) -> Vec<u8> {
     fs::read(
