@@ -26,116 +26,119 @@ It also supports OpenDocument Presentation (`.odp`).
 - 🪄 **Embedding:** Used to provide pptx content and meta-information in a form that is useful for embeddings
 ---
 
-## 👨‍💻 Example Usage
+## 📌 Quickstart
 
-`PresentationContainer` is the recommended entry point for new code. It detects whether the input is a PowerPoint (`.pptx`) or OpenDocument Presentation (`.odp`) file and exposes the same parsing API for both formats.
-
-```rust
-use pptx_to_md::{ImageHandlingMode, ParserConfig, PresentationContainer};
-use std::path::Path;
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = ParserConfig::builder()
-        .include_presentation_metadata(true)
-        .compress_images(true)
-        .quality(80)
-        .image_handling_mode(ImageHandlingMode::InMarkdown)
-        .include_slide_number_as_comment(true)
-        .include_speaker_notes(false)
-        .include_comments(false)
-        .build();
-
-    let mut container = PresentationContainer::open(
-        Path::new("path/to/presentation.pptx"), // or .odp
-        config,
-    )?;
-
-    let markdown = container.convert_to_md()?;
-    std::fs::write("output.md", markdown)?;
-    
-    Ok(())
-}
-```
-
-`PresentationContainer::convert_to_md()` is the preferred API for converting
-a complete PPTX or ODP document. It emits presentation metadata once at the
-start and then appends all slide Markdown in order. The existing `parse_all()`,
-streaming, and per-slide APIs remain available for structured processing.
-
-### Semantic document model
-
-`PresentationContainer::parse_document()` returns a **semantic** `Presentation`
-containing metadata, slides, and non-fatal parser diagnostics. Each slide exposes
-ordered `blocks` with bounds and source order. Text blocks preserve title/body
-roles, individual paragraphs, list metadata, run formatting, and hyperlinks;
-tables preserve merged-cell information and images retain alternative text.
-
-For custom Markdown behavior, call `Slide::to_markdown(&MarkdownOptions)`.
-`ReadingOrder::Spatial` is the default and groups content by visual columns;
-`ReadingOrder::Source` preserves the package's source order. Per-slide
-`convert_to_md()` now returns `Result<String>` so image and filesystem failures
-cannot be discarded silently.
-
-See [Semantic presentation-to-Markdown conversion](docs/SEMANTIC_MARKDOWN_CONVERSION.md)
-for the architecture, migration notes, test coverage, and known limitations of
-the pull-parser and semantic-model changes.
-
-To access metadata as structured Rust values without converting slides, see
-[`examples/presentation_metadata.rs`](https://github.com/nilskruthoff/pptx-parser/tree/master/examples/presentation_metadata.rs).
-
-For PPTX-only code, `PptxContainer` remains available for backwards compatibility and for callers that explicitly want the old PowerPoint-only entry point. New code that may handle both formats should prefer `PresentationContainer`.
-For more usage examples, refer to the [examples](https://github.com/nilskruthoff/pptx-parser/tree/master/examples) directory.
-
-### PPTX and ODP auto-detection
-
-Use `PresentationContainer` when the input may be either `.pptx` or `.odp`:
+`PresentationContainer` is the preferred entry point for all new code. It
+detects PPTX and ODP automatically. The default configuration produces complete
+Markdown with presentation metadata, slide markers, spatial reading order, and
+embedded images.
 
 ```rust
-use pptx_to_md::{ParserConfig, PresentationContainer, PresentationFormat};
+use pptx_to_md::{ParserConfig, PresentationContainer, Result};
 use std::path::Path;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let mut presentation = PresentationContainer::open(
-        Path::new("path/to/presentation.odp"),
+        Path::new("presentation.pptx"), // also accepts .odp
         ParserConfig::default(),
     )?;
 
-    assert_eq!(presentation.format(), PresentationFormat::Odp);
-    let slides = presentation.parse_all()?;
+    let markdown = presentation.convert_to_md()?;
+    std::fs::write("output.md", markdown)?;
     Ok(())
 }
 ```
 
-If the format is already known, use `open_as` to skip auto-detection:
+See [`examples/basic_usage.rs`](examples/basic_usage.rs) for the corresponding
+command-line example.
+
+## 🎯 Choosing the right API
+
+Start with `PresentationContainer` and select the operation based on what the
+application needs:
+
+| Goal | Preferred API | What it does |
+| --- | --- | --- |
+| Convert one complete presentation | `convert_to_md()` | Parses every slide and returns one Markdown document, including optional presentation metadata |
+| Convert a large PPTX faster | `convert_to_md_multi_threaded()` | Uses parallel slide parsing for PPTX; ODP transparently uses its normal document parser |
+| Inspect or transform structured content | `parse_document()` | Returns metadata, semantic slides and blocks, and aggregated diagnostics |
+| Work with all slides directly | `parse_all()` | Returns `Vec<Slide>` without creating presentation-level Markdown |
+| Process one slide at a time | `iter_slides()` | Streams `Result<Slide>` values and avoids retaining every parsed slide |
+| Customize one slide's Markdown | `Slide::to_markdown(&MarkdownOptions)` | Controls reading order, slide marker, notes, comments, and unsupported-content comments |
+| Read only document properties | `metadata()` | Returns parsed presentation metadata without parsing the slides |
+
+`ParserConfig` controls parsing, image handling, and the defaults used by
+`convert_to_md()`. `MarkdownOptions` is only needed when rendering an individual
+parsed slide differently.
+
+Important behavior differences:
+
+- Presentation-level `convert_to_md*()` methods parse and render the slides and
+  emit presentation metadata once. Per-slide methods never emit presentation
+  metadata.
+- `parse_document()` and `parse_all*()` retain all returned slides. The former
+  additionally packages metadata and aggregates slide diagnostics.
+- `Slide::convert_to_md()` uses the rendering flags copied from `ParserConfig`.
+  `Slide::to_markdown()` accepts explicit `MarkdownOptions` for that one call;
+  image loading and image output mode still come from the slide's
+  `ParserConfig`.
+- `PresentationContainer::open()` performs format detection. Use `format()` to
+  inspect the result. `open_as()` is only necessary when the caller explicitly
+  wants to force `PresentationFormat::Pptx` or `PresentationFormat::Odp`.
+
+### Structured content and custom Markdown
+
+Use `parse_document()` when Markdown is not the only desired output or parser
+diagnostics need to be inspected:
 
 ```rust
-use pptx_to_md::{ParserConfig, PresentationContainer, PresentationFormat};
+use pptx_to_md::{MarkdownOptions, ParserConfig, PresentationContainer, ReadingOrder, Result};
 use std::path::Path;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut presentation = PresentationContainer::open_as(
-        Path::new("path/to/presentation.pptx"),
+fn main() -> Result<()> {
+    let mut presentation = PresentationContainer::open(
+        Path::new("presentation.odp"),
         ParserConfig::default(),
-        PresentationFormat::Pptx,
     )?;
+    let document = presentation.parse_document()?;
 
-    let slides = presentation.parse_all()?;
+    for diagnostic in &document.diagnostics {
+        eprintln!("{:?}: {}", diagnostic.severity, diagnostic.message);
+    }
+
+    let options = MarkdownOptions {
+        reading_order: ReadingOrder::Source,
+        include_speaker_notes: true,
+        ..MarkdownOptions::default()
+    };
+    let first_slide_markdown = document.slides[0].to_markdown(&options)?;
+    println!("{first_slide_markdown}");
     Ok(())
 }
 ```
+
+`ReadingOrder::Spatial` is the default and orders visual columns heuristically.
+`ReadingOrder::Source` preserves the order in the source XML.
+
+### Streaming and parallel parsing
+
+Use `iter_slides()` for bounded-memory processing. Each slide is parsed when the
+iterator advances. Use `parse_all_multi_threaded()` or
+`convert_to_md_multi_threaded()` for CPU-parallel PPTX parsing. ODP stores its
+pages in one `content.xml`, so its implementation remains sequential.
 
 ---
 
-## Config Parameters
+## ⚙️ Config Parameters
 
 | Parameter                | Type                  | Default       | Description                                                                                               |
 |--------------------------|-----------------------|---------------|-----------------------------------------------------------------------------------------------------------|
 | `extract_images`         | `bool`                | `true`        | Whether images are extracted from slides or not. If false, images can not be extracted manually either.   |
 | `compress_images`        | `bool`                | `true`        | Whether images are compressed before encoding or not. Effects manually extracted images too.              |
-| `image_quality`          | `u8`                  | `80`          | Defines the image compression quality `(0-100)`. Higher values mean better quality but larger file sizes. |
+| `quality`               | `u8`                  | `80`          | Defines the image compression quality `(0-100)`. Higher values mean better quality but larger file sizes. |
 | `image_handling_mode`    | `ImageHandlingMode`   | `InMarkdown`  | Determines how images are handled during content export                                                   |
 | `image_output_path`      | `Option<PathBuf>`     | `None`        | Output directory path for `ImageHandlingMode::Save` (mandatory for saving mode)                           |
-| `include_slide_number_as_comment`  | `bool`                | `true`        | Weather the slide number comment is included or not (`<!-- Slide [n] -->`)                                | 
+| `include_slide_number_as_comment`  | `bool`                | `true`        | Whether the slide number comment is included (`<!-- Slide [n] -->`)                                       |
 | `include_speaker_notes`  | `bool`                | `false`       | Whether speaker notes are appended to Markdown as blockquotes                                             |
 | `include_comments`       | `bool`                | `false`       | Whether presentation comments are appended to Markdown as blockquotes                                     |
 | `include_presentation_metadata` | `bool`       | `true`        | Whether complete-presentation Markdown starts with a metadata HTML comment                                 |
@@ -146,7 +149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 |---------------|---------------------------------------------------------------------------------------------------------------------------------|
 | `InMarkdown`  | Images are embedded directly in the Markdown output using standard syntax as `base64` data (`![]()`)                            |            
 | `Manually`    | Image handling is delegated to the user, requiring manual copying or referencing (as `base64`)                                  |
-| `Save`        | Images will be saved in a provided output directory and integrated using `<a>` tag syntax (`<a href="file:///<abs_path>"></a>`) |            
+| `Save`        | Images are saved in the configured output directory and referenced with Markdown image syntax and a `file://` URL              |
 
 ---
 

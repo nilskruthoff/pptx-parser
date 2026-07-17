@@ -8,7 +8,7 @@ use std::path::PathBuf;
 /// |-----------------------|-----------------------------------------------------------------------------------------------------------------------------------|            
 /// | `InMarkdown`          | Images are embedded directly in the Markdown output using standard syntax as `base64` data (`![]()`)                              |            
 /// | `Manually`            | Image handling is delegated to the user, requiring manual copying or referencing (as `base64` encoded string)                     |            
-/// | `Save`                | Images will be saved in a provided output directory and integrated using `<a>` tag syntax (`<a href="file:///<abs_path>"></a>`)   |            
+/// | `Save`                | Images are saved in a provided output directory and referenced using Markdown image syntax with a `file://` URL                  |
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImageHandlingMode {
     InMarkdown,
@@ -27,10 +27,10 @@ pub enum ImageHandlingMode {
 /// |---------------------------|-----------------------|---------------|-----------------------------------------------------------------------------------------------------------|
 /// | `extract_images`          | `bool`                | `true`        | Whether images are extracted from slides or not. If false, images can not be extracted manually either    |
 /// | `compress_images`         | `bool`                | `true`        | Whether images are compressed before encoding or not. Effects manually extracted images too               |
-/// | `image_quality`           | `u8`                  | `80`          | Compression level (0-100);<br/> higher values retain more detail but increase file size                   |
+/// | `quality`                 | `u8`                  | `80`          | Compression level (0-100);<br/> higher values retain more detail but increase file size                   |
 /// | `image_handling_mode`     | `ImageHandlingMode`   | `InMarkdown`  | Determines how images are handled during content export                                                   |
 /// | `image_output_path`       | `Option<PathBuf>`     | `None`        | Output directory path for `ImageHandlingMode::Save` (mandatory for the saving mode)                       |
-/// | `include_slide_number_as_comment`   | `bool`                | `true`        | Weather the slide number comment is included or not (`<!-- Slide [n] -->`)                                |
+/// | `include_slide_number_as_comment`   | `bool`                | `true`        | Whether the slide number comment is included (`<!-- Slide [n] -->`)                                       |
 /// | `include_speaker_notes`   | `bool`                | `false`       | Whether speaker notes are appended to Markdown as blockquotes                                               |
 /// | `include_comments`        | `bool`                | `false`       | Whether presentation comments are appended to Markdown as blockquotes                                       |
 /// | `include_presentation_metadata` | `bool`          | `true`        | Whether presentation-wide Markdown starts with a metadata comment                                            |

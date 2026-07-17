@@ -1,61 +1,38 @@
-//! Memory-efficient streaming example for the pptx-to-md crate
+//! Process one PPTX or ODP slide at a time instead of retaining all slides.
 //!
-//! This example demonstrates how to use the streaming API to process large
-//! PPTX files with minimal memory usage.
-//!
-//! Run with: cargo run --example memory_efficient_streaming <path/to/your/presentation.pptx>
+//! Run with:
+//! cargo run --example memory_efficient_streaming <presentation.pptx|presentation.odp>
 
-use pptx_to_md::{ParserConfig, PptxContainer, Result};
+use pptx_to_md::{ParserConfig, PresentationContainer, Result};
 use std::env;
 use std::fs;
 use std::path::Path;
 
 fn main() -> Result<()> {
-    // Get the PPTX file path from command line arguments
     let args: Vec<String> = env::args().collect();
-    let pptx_path = if args.len() > 1 {
-        &args[1]
-    } else {
+    let Some(input_path) = args.get(1) else {
         eprintln!(
-            "Usage: cargo run --example memory_efficient_streaming <path/to/presentation.pptx>"
+            "Usage: cargo run --example memory_efficient_streaming <presentation.pptx|presentation.odp>"
         );
         return Ok(());
     };
 
-    println!("Processing PPTX file: {}", pptx_path);
-
-    // Use the config builder to build your config
-    let config = ParserConfig::builder().extract_images(true).build();
-
-    // Open the PPTX file with the streaming API
-    let mut streamer = PptxContainer::open(Path::new(pptx_path), config)?;
-
-    // Create output directory
+    let mut presentation =
+        PresentationContainer::open(Path::new(input_path), ParserConfig::default())?;
     let output_dir = "output_streaming";
     fs::create_dir_all(output_dir)?;
 
-    // Process slides one by one using the iterator
-    for slide_result in streamer.iter_slides() {
-        match slide_result {
-            Ok(slide) => {
-                println!(
-                    "Processing slide {} ({} elements)",
-                    slide.slide_number,
-                    slide.elements.len()
-                );
-
-                let md_content = slide.convert_to_md()?;
-                let output_path = format!("{}/slide_{}.md", output_dir, slide.slide_number);
-                fs::write(&output_path, md_content)?;
-                println!("Saved slide {} to {}", slide.slide_number, output_path);
-            }
-            Err(e) => {
-                eprintln!("Error processing slide: {:?}", e);
-            }
-        }
+    // Unlike parse_document(), the iterator only retains the current slide.
+    for slide_result in presentation.iter_slides() {
+        let slide = slide_result?;
+        let output_path = format!("{output_dir}/slide_{}.md", slide.slide_number);
+        fs::write(&output_path, slide.convert_to_md()?)?;
+        println!(
+            "Saved slide {} ({} semantic blocks) to {output_path}",
+            slide.slide_number,
+            slide.blocks.len()
+        );
     }
-
-    println!("All slides processed successfully!");
 
     Ok(())
 }

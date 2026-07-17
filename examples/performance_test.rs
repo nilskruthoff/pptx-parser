@@ -7,9 +7,9 @@
 //!
 //! It also provides timing for individual operations to identify bottlenecks.
 //!
-//! Run with: cargo run --release --example performance_test <path/to/your/presentation.pptx> [iterations]
+//! Run with: cargo run --release --example performance_test <presentation.pptx|presentation.odp> [iterations]
 
-use pptx_to_md::{ParserConfig, PptxContainer, Result};
+use pptx_to_md::{ParserConfig, PresentationContainer, Result};
 use rayon::prelude::*;
 use std::env;
 use std::path::Path;
@@ -74,7 +74,7 @@ fn main() -> Result<()> {
         &args[1]
     } else {
         eprintln!(
-            "Usage: cargo run --example performance_test <path/to/presentation.pptx> [iterations]"
+            "Usage: cargo run --example performance_test <presentation.pptx|presentation.odp> [iterations]"
         );
         return Ok(());
     };
@@ -101,17 +101,14 @@ fn main() -> Result<()> {
         // Measure container creation
         let mut container = single_thread_bench.measure(|| {
             let config = ParserConfig::builder().extract_images(true).build();
-            PptxContainer::open(Path::new(pptx_path), config).expect("Failed to open PPTX")
+            PresentationContainer::open(Path::new(pptx_path), config)
+                .expect("Failed to open presentation")
         });
-
-        println!(
-            "  Found {} slides in the presentation",
-            container.slide_count
-        );
 
         // Measure parsing
         let slides =
             single_thread_bench.measure(|| container.parse_all().expect("Failed to parse slides"));
+        println!("  Found {} slides in the presentation", slides.len());
 
         // Measure conversion
         let _md_content = single_thread_bench.measure(|| {
@@ -141,16 +138,9 @@ fn main() -> Result<()> {
         // Measure container creation
         let mut container = single_thread_streamed_bench.measure(|| {
             let config = ParserConfig::builder().extract_images(true).build();
-            PptxContainer::open(Path::new(pptx_path), config).expect("Failed to open PPTX")
+            PresentationContainer::open(Path::new(pptx_path), config)
+                .expect("Failed to open presentation")
         });
-
-        println!(
-            "  Found {} slides in the presentation",
-            container.slide_count
-        );
-
-        // Zähle die Slides im Voraus für die statistische Auswertung
-        let expected_slides = container.slide_count;
 
         // Measure slide processing (including parsing and conversion)
         let slides_processed = single_thread_streamed_bench.measure(|| {
@@ -173,10 +163,7 @@ fn main() -> Result<()> {
             processed
         });
 
-        println!(
-            "  Processed {} out of {} slides",
-            slides_processed, expected_slides
-        );
+        println!("  Processed {} slides", slides_processed);
         total_slides += slides_processed;
     }
 
@@ -197,15 +184,10 @@ fn main() -> Result<()> {
         // Container öffnen mit der gewünschten Konfiguration
         let mut container = optimized_multi_thread_bench.measure(|| {
             let config = ParserConfig::builder().extract_images(true).build();
-            PptxContainer::open(Path::new(pptx_path), config).expect("Failed to open PPTX")
+            PresentationContainer::open(Path::new(pptx_path), config)
+                .expect("Failed to open presentation")
         });
 
-        println!(
-            "  Found {} slides in the presentation",
-            container.slide_count
-        );
-
-        // Verwende die neue optimierte Multi-Threading-Methode
         let slides = optimized_multi_thread_bench.measure(|| {
             container
                 .parse_all_multi_threaded()
