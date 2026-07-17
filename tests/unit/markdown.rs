@@ -78,7 +78,7 @@ fn escapes_text_before_adding_formatting_and_links() {
     };
     assert_eq!(
         render_runs(&[linked], MarkdownContext::Flow),
-        r"[**\*label\***](https://example.com/a_(b))"
+        r"[**\*label\***](<https://example.com/a_(b)>)"
     );
 }
 
@@ -145,4 +145,32 @@ fn keeps_boundary_whitespace_outside_formatting_markers() {
         " _leading and trailing_ "
     );
     assert_eq!(render_runs(&[formatted(" ")], MarkdownContext::Flow), " ");
+}
+
+#[test]
+fn renders_strikethrough_and_baseline_semantics() {
+    let mut strike = run("removed");
+    strike.formatting.strikethrough = true;
+    let mut superscript = run("2");
+    superscript.formatting.baseline = Baseline::Superscript;
+    let mut subscript = run("n");
+    subscript.formatting.baseline = Baseline::Subscript;
+
+    assert_eq!(strike.render_as_md(), "~~removed~~");
+    assert_eq!(superscript.render_as_md(), "<sup>2</sup>");
+    assert_eq!(subscript.render_as_md(), "<sub>n</sub>");
+}
+
+#[test]
+fn protects_link_destinations_with_spaces_and_parentheses() {
+    let linked = Run {
+        text: "destination".to_string(),
+        formatting: Formatting::default(),
+        link_target: Some("https://example.com/a path_(draft)".to_string()),
+    };
+
+    assert_eq!(
+        linked.render_as_md(),
+        "[destination](<https://example.com/a path_(draft)>)"
+    );
 }
