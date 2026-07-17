@@ -150,47 +150,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ---
 
-## 🏗 Project Structure
-```
-pptx-to-md/
-├── Cargo.toml
-├── README.md
-├── CHANGELOG.md
-├── LICENSE-MIT
-├── LICENSE-APACHE
-├── examples/           # Simple examples to present the usage of this crate
-│   ├── basic_usage.rs
-│   ├── presentation_metadata.rs
-│   ├── manual_image_extraction.rs
-│   ├── memory_efficient_streaming.rs
-│   ├── performance_test.rs
-│   ├── save_images.rs
-│   └── slide_elements.rs
-├── src/
-│   ├── lib.rs            # Public API
-│   ├── container.rs      # Pptx container handling
-│   ├── presentation.rs   # Format-detecting presentation container
-│   ├── odp.rs            # ODP container handling
-│   ├── parser_config.rs  # Config and config builder
-│   ├── slide.rs          # Individual slide representation & markdown conversion
-│   ├── parse_xml.rs      # XML parsing logic
-│   ├── parse_rels.rs     # Relationship parsing logic
-│   └── types.rs          # Common data types used
-├── tests/
-│   ├── fixtures/       # XML, Markdown, media, and presentation fixtures
-│   ├── integration/    # end-to-end PPTX and ODP tests
-│   └── unit/           # module-level tests
-```
-
----
-
 ## 📦 Installation
 
 Include the following line in your Cargo.toml dependencies section:
 
 ```toml
 [dependencies]
-pptx-to-md = "0.5.1"
+pptx-to-md = "1.0.0"
 ```
 
 ---
@@ -199,6 +165,6 @@ pptx-to-md = "0.5.1"
 This project is licensed under the [MIT-License](https://github.com/nilskruthoff/pptx-parser/blob/master/LICENCE-MIT)
 and [Apache 2.0-Licence](https://github.com/nilskruthoff/pptx-parser/blob/master/LICENSE-APACHE).
 
-Feel free to contribute or suggest improvements!
+Feel free to contribute or suggest improvements! 😊
 
 ---
