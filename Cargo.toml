@@ -42,7 +42,7 @@ path = "examples/slide_elements.rs"
 
 [dependencies]
 zip = "8.6.0"
-roxmltree = "0.21.1"
+quick-xml = "0.41.0"
 thiserror = "2.0.18"
 base64 = "0.22.1"
 image = "0.25.10"
