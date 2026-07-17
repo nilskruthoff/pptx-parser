@@ -217,3 +217,73 @@ fn reads_only_body_notes_and_rejects_malformed_xml() {
     assert_eq!(notes[0].runs[0].text, "Note\n");
     assert!(parse_slide_xml(b"<p:sld").is_err());
 }
+
+#[test]
+fn preserves_semantics_for_tables_images_and_fallbacks_inside_groups() {
+    let slide = br#"
+      <p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+             xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+             xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+        <p:cSld><p:spTree><p:grpSp>
+          <p:grpSpPr><a:xfrm>
+            <a:off x="100" y="200"/><a:ext cx="200" cy="400"/>
+            <a:chOff x="10" y="20"/><a:chExt cx="100" cy="200"/>
+          </a:xfrm></p:grpSpPr>
+          <p:sp><p:spPr><a:xfrm><a:off x="10" y="20"/><a:ext cx="20" cy="30"/></a:xfrm></p:spPr></p:sp>
+          <p:graphicFrame>
+            <p:xfrm><a:off x="30" y="40"/><a:ext cx="100" cy="50"/></p:xfrm>
+            <a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">
+              <a:tbl><a:tr><a:tc><a:txBody><a:p><a:r><a:t>Grouped cell</a:t></a:r></a:p></a:txBody></a:tc></a:tr></a:tbl>
+            </a:graphicData></a:graphic>
+          </p:graphicFrame>
+          <p:graphicFrame>
+            <p:xfrm><a:off x="40" y="50"/><a:ext cx="60" cy="70"/></p:xfrm>
+            <a:graphic><a:graphicData uri="chart"><a:t>Quarterly revenue</a:t></a:graphicData></a:graphic>
+          </p:graphicFrame>
+          <p:pic>
+            <p:nvPicPr><p:cNvPr id="2" name="Picture" descr="Accessible chart"/></p:nvPicPr>
+            <p:blipFill><a:blip r:embed="rId7"/></p:blipFill>
+            <p:spPr><a:xfrm><a:off x="20" y="30"/><a:ext cx="50" cy="60"/></a:xfrm></p:spPr>
+          </p:pic>
+          <p:grpSp><p:grpSpPr/><p:sp>
+            <p:spPr><a:xfrm><a:off x="5" y="6"/><a:ext cx="20" cy="10"/></a:xfrm></p:spPr>
+            <p:txBody><a:p><a:r><a:t>Nested text</a:t></a:r></a:p></p:txBody>
+          </p:sp></p:grpSp>
+          <p:cxnSp><p:nvCxnSpPr/></p:cxnSp>
+        </p:grpSp></p:spTree></p:cSld>
+      </p:sld>"#;
+
+    let parsed = parse_slide_document_with_hyperlinks(
+        slide,
+        &InheritedPositions::default(),
+        &HashMap::new(),
+    )
+    .unwrap();
+
+    assert_eq!(parsed.blocks.len(), 6);
+    assert_eq!(parsed.diagnostics.len(), 3);
+    assert_eq!(parsed.blocks[1].bounds, Bounds { x: 140, y: 240, width: 200, height: 100 });
+    let SlideBlockContent::Table(table) = &parsed.blocks[1].content else {
+        panic!("expected grouped table")
+    };
+    assert_eq!(table.rows[0].cells[0].paragraphs[0].text(), "Grouped cell");
+
+    let SlideBlockContent::Unsupported(chart) = &parsed.blocks[2].content else {
+        panic!("expected chart fallback")
+    };
+    assert_eq!(chart.fallback_text.as_deref(), Some("Quarterly revenue"));
+
+    let SlideBlockContent::Image(image) = &parsed.blocks[3].content else {
+        panic!("expected grouped image")
+    };
+    assert_eq!(image.reference.id, "rId7");
+    assert_eq!(image.alt_text.as_deref(), Some("Accessible chart"));
+    assert_eq!(parsed.blocks[3].bounds, Bounds { x: 120, y: 220, width: 100, height: 120 });
+
+    let SlideBlockContent::Text(nested) = &parsed.blocks[4].content else {
+        panic!("expected nested group text")
+    };
+    assert_eq!(nested.paragraphs[0].text(), "Nested text\n");
+    assert!(parsed.diagnostics.iter().any(|diagnostic| diagnostic.message.contains("graphicFrame")));
+    assert!(parsed.diagnostics.iter().any(|diagnostic| diagnostic.message.contains("cxnSp")));
+}

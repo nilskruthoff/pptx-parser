@@ -139,3 +139,60 @@ fn converts_lengths_transforms_and_reports_bad_xml() {
     );
     assert!(index_pages(b"<broken").is_err());
 }
+
+#[test]
+fn parses_empty_images_accessible_titles_frame_tables_and_headings() {
+    let xml = br#"
+      <office:document-content
+          xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+          xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+          xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+          xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+          xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"
+          xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"
+          xmlns:xlink="http://www.w3.org/1999/xlink">
+        <office:body><office:presentation><draw:page>
+          <draw:image xlink:href="Pictures/direct.png" svg:x="1cm" svg:y="2cm" svg:width="3cm" svg:height="4cm"/>
+          <draw:frame draw:name="Frame fallback" svg:x="5cm" svg:y="1cm" svg:width="2cm" svg:height="2cm">
+            <draw:image xlink:href="Pictures/framed.png"></draw:image>
+            <svg:title>Accessible &amp; image</svg:title>
+          </draw:frame>
+          <draw:frame svg:x="1cm" svg:y="7cm" svg:width="6cm" svg:height="2cm">
+            <table:table><table:table-row><table:table-cell><text:p>Frame cell</text:p></table:table-cell></table:table-row></table:table>
+          </draw:frame>
+          <draw:frame svg:x="1cm" svg:y="10cm" svg:width="6cm" svg:height="1cm">
+            <draw:text-box><text:h>Section heading</text:h></draw:text-box>
+          </draw:frame>
+          <presentation:notes><draw:frame><draw:image xlink:href="Pictures/note.png"/></draw:frame></presentation:notes>
+        </draw:page></office:presentation></office:body>
+      </office:document-content>"#;
+
+    let pages = index_pages(xml).unwrap();
+    let fragment = page_fragment(&xml[pages[0].range.clone()], &pages[0].namespaces);
+    let parsed = parse_page_fragment(&fragment, &StyleResolver::default()).unwrap();
+
+    assert_eq!(parsed.elements.len(), 4);
+    let SlideBlockContent::Image(direct) = &parsed.blocks[0].content else {
+        panic!("expected direct image")
+    };
+    assert_eq!(direct.reference.target, "Pictures/direct.png");
+    assert_eq!(parsed.blocks[0].bounds.x, 360_000);
+    assert_eq!(parsed.blocks[0].bounds.height, 1_440_000);
+
+    let SlideBlockContent::Image(framed) = &parsed.blocks[1].content else {
+        panic!("expected framed image")
+    };
+    assert_eq!(framed.alt_text.as_deref(), Some("Accessible & image"));
+
+    let SlideBlockContent::Table(table) = &parsed.blocks[2].content else {
+        panic!("expected frame table")
+    };
+    assert_eq!(table.rows[0].cells[0].paragraphs[0].text(), "Frame cell\n");
+
+    let SlideBlockContent::Text(heading) = &parsed.blocks[3].content else {
+        panic!("expected heading")
+    };
+    assert_eq!(heading.role, TextRole::Heading);
+    assert_eq!(heading.paragraphs[0].text(), "Section heading\n");
+    assert!(parsed.speaker_notes.is_empty());
+}

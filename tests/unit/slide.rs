@@ -777,3 +777,224 @@ fn semantic_renderer_uses_html_for_merged_tables_and_reports_unknown_blocks() {
     assert!(markdown.contains("Revenue 2026"));
     assert!(markdown.contains("<!-- Unsupported slide element: chart -->"));
 }
+
+#[test]
+fn legacy_constructor_builds_semantic_blocks_for_every_element_kind() {
+    let run = |text: &str| Run {
+        text: text.to_string(),
+        formatting: Formatting::default(),
+        link_target: None,
+    };
+    let elements = vec![
+        SlideElement::Text(
+            TextElement {
+                runs: vec![run("Text")],
+            },
+            ElementPosition { x: 1, y: 2 },
+        ),
+        SlideElement::List(
+            ListElement {
+                items: vec![ListItem {
+                    level: 1,
+                    is_ordered: true,
+                    runs: vec![run("Second")],
+                }],
+            },
+            ElementPosition { x: 3, y: 4 },
+        ),
+        SlideElement::Table(
+            TableElement {
+                rows: vec![TableRow {
+                    cells: vec![TableCell {
+                        runs: vec![run("Cell")],
+                        ..TableCell::default()
+                    }],
+                }],
+            },
+            ElementPosition { x: 5, y: 6 },
+        ),
+        image_element("image", "../media/image.png"),
+        SlideElement::Unknown,
+    ];
+
+    let slide = Slide::new(
+        "ppt/slides/slide9.xml".to_string(),
+        9,
+        elements,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        HashMap::new(),
+        ParserConfig::default(),
+    );
+
+    assert_eq!(slide.blocks.len(), 5);
+    let SlideBlockContent::Text(list) = &slide.blocks[1].content else {
+        panic!("expected semantic list text")
+    };
+    assert!(matches!(
+        list.paragraphs[0].list.as_ref().map(|list| &list.kind),
+        Some(ListKind::Ordered { start: 1, .. })
+    ));
+    assert!(matches!(
+        slide.blocks[2].content,
+        SlideBlockContent::Table(_)
+    ));
+    assert!(matches!(
+        slide.blocks[3].content,
+        SlideBlockContent::Image(_)
+    ));
+    assert!(matches!(
+        slide.blocks[4].content,
+        SlideBlockContent::Unsupported(_)
+    ));
+}
+
+#[test]
+fn spatial_order_handles_dimensionless_blocks_and_full_width_separators() {
+    let block = |text: &str, bounds: Bounds, source_order: usize| SlideBlock {
+        bounds,
+        source_order,
+        content: semantic_text(text, TextRole::Body),
+    };
+    let mut slide = mock_slide();
+    let options = MarkdownOptions {
+        include_slide_number_as_comment: false,
+        ..MarkdownOptions::default()
+    };
+
+    slide.blocks = vec![
+        block(
+            "Second",
+            Bounds {
+                x: 20,
+                y: 10,
+                width: 0,
+                height: 0,
+            },
+            0,
+        ),
+        block(
+            "First",
+            Bounds {
+                x: 10,
+                y: 20,
+                width: 0,
+                height: 0,
+            },
+            1,
+        ),
+    ];
+    let dimensionless = slide.to_markdown(&options).unwrap();
+    assert!(dimensionless.find("Second").unwrap() < dimensionless.find("First").unwrap());
+
+    slide.blocks = vec![
+        block(
+            "Right above",
+            Bounds {
+                x: 500,
+                y: 100,
+                width: 100,
+                height: 50,
+            },
+            0,
+        ),
+        block(
+            "Left above",
+            Bounds {
+                x: 0,
+                y: 150,
+                width: 100,
+                height: 50,
+            },
+            1,
+        ),
+        block(
+            "Separator",
+            Bounds {
+                x: 0,
+                y: 300,
+                width: 600,
+                height: 40,
+            },
+            2,
+        ),
+        block(
+            "Right below",
+            Bounds {
+                x: 500,
+                y: 400,
+                width: 100,
+                height: 50,
+            },
+            3,
+        ),
+        block(
+            "Left below",
+            Bounds {
+                x: 0,
+                y: 450,
+                width: 100,
+                height: 50,
+            },
+            4,
+        ),
+    ];
+    let spatial = slide.to_markdown(&options).unwrap();
+    assert!(spatial.find("Left above").unwrap() < spatial.find("Right above").unwrap());
+    assert!(spatial.find("Right above").unwrap() < spatial.find("Separator").unwrap());
+    assert!(spatial.find("Separator").unwrap() < spatial.find("Left below").unwrap());
+    assert!(spatial.find("Left below").unwrap() < spatial.find("Right below").unwrap());
+}
+
+#[test]
+fn semantic_image_rendering_covers_missing_manual_and_invalid_compression_paths() {
+    let image = SlideBlock {
+        bounds: Bounds::default(),
+        source_order: 0,
+        content: SlideBlockContent::Image(ImageBlock {
+            reference: ImageReference {
+                id: "image".to_string(),
+                target: "../media/image.png".to_string(),
+            },
+            alt_text: Some("Diagram".to_string()),
+            mime_type: Some("image/png".to_string()),
+        }),
+    };
+    let options = MarkdownOptions {
+        include_slide_number_as_comment: false,
+        ..MarkdownOptions::default()
+    };
+
+    let mut slide = mock_slide();
+    slide.blocks = vec![image.clone()];
+    assert!(
+        slide
+            .to_markdown(&options)
+            .unwrap()
+            .contains("Image unavailable: Diagram")
+    );
+
+    slide.config.image_handling_mode = ImageHandlingMode::Manually;
+    assert_eq!(slide.to_markdown(&options).unwrap(), "\n");
+
+    slide.config.image_handling_mode = ImageHandlingMode::InMarkdown;
+    slide.config.compress_images = true;
+    slide
+        .image_data
+        .insert("image".to_string(), b"invalid image".to_vec());
+    assert!(
+        slide
+            .to_markdown(&options)
+            .unwrap()
+            .contains("Image unavailable: Diagram")
+    );
+
+    slide.config.image_handling_mode = ImageHandlingMode::Save;
+    assert!(
+        slide
+            .to_markdown(&options)
+            .unwrap()
+            .contains("Image unavailable: Diagram")
+    );
+}
