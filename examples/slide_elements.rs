@@ -1,66 +1,53 @@
-﻿//! Working with the parsed slide elements example for the pptx-to-md crate
+//! Inspect the semantic document model instead of rendering Markdown directly.
 //!
-//! This example demonstrates how to use the slide elements before the elements are parsed to Markdown,
-//! to do your conversion logic.
-//!
-//! Run with: cargo run --example slide_elements <path/to/your/presentation.pptx>
+//! Run with:
+//! cargo run --example slide_elements <presentation.pptx|presentation.odp>
 
-use pptx_to_md::{ParserConfig, PptxContainer, Result, SlideBlockContent};
+use pptx_to_md::{ParserConfig, PresentationContainer, Result, SlideBlockContent};
 use std::env;
 use std::path::Path;
 
 fn main() -> Result<()> {
-    // Get the PPTX file path from command line arguments
     let args: Vec<String> = env::args().collect();
-    let pptx_path = if args.len() > 1 {
-        &args[1]
-    } else {
-        eprintln!("Usage: cargo run --example slide_elements <path/to/presentation.pptx>");
+    let Some(input_path) = args.get(1) else {
+        eprintln!("Usage: cargo run --example slide_elements <presentation.pptx|presentation.odp>");
         return Ok(());
     };
 
-    println!("Processing PPTX file: {}", pptx_path);
+    let mut presentation =
+        PresentationContainer::open(Path::new(input_path), ParserConfig::default())?;
+    let document = presentation.parse_document()?;
 
-    // Use the config builder to build your config
-    let config = ParserConfig::builder().extract_images(true).build();
+    println!(
+        "Parsed {:?} presentation with {} slides and {} diagnostics",
+        presentation.format(),
+        document.slides.len(),
+        document.diagnostics.len()
+    );
 
-    // Open the PPTX file with the streaming API
-    let mut streamer = PptxContainer::open(Path::new(pptx_path), config)?;
-
-    // Process slides one by one using the iterator
-    for slide_result in streamer.iter_slides() {
-        match slide_result {
-            Ok(slide) => {
-                println!(
-                    "Processing slide {} ({} semantic blocks)",
-                    slide.slide_number,
-                    slide.blocks.len()
-                );
-
-                for block in &slide.blocks {
-                    match &block.content {
-                        SlideBlockContent::Text(text) => {
-                            println!("{:?}\t{:?}\n", text, block.bounds)
-                        }
-                        SlideBlockContent::Table(table) => {
-                            println!("{:?}\t{:?}\n", table, block.bounds)
-                        }
-                        SlideBlockContent::Image(image) => {
-                            println!("{:?}\t{:?}\n", image, block.bounds)
-                        }
-                        SlideBlockContent::Unsupported(unsupported) => {
-                            println!("Unsupported: {:?}\n", unsupported)
-                        }
-                    }
+    for slide in &document.slides {
+        println!(
+            "Slide {} ({} semantic blocks)",
+            slide.slide_number,
+            slide.blocks.len()
+        );
+        for block in &slide.blocks {
+            match &block.content {
+                SlideBlockContent::Text(text) => {
+                    println!("  {:?} text at {:?}: {:?}", text.role, block.bounds, text)
                 }
-            }
-            Err(e) => {
-                eprintln!("Error processing slide: {:?}", e);
+                SlideBlockContent::Table(table) => {
+                    println!("  Table at {:?}: {:?}", block.bounds, table)
+                }
+                SlideBlockContent::Image(image) => {
+                    println!("  Image at {:?}: {:?}", block.bounds, image)
+                }
+                SlideBlockContent::Unsupported(unsupported) => {
+                    println!("  Unsupported at {:?}: {:?}", block.bounds, unsupported)
+                }
             }
         }
     }
-
-    println!("All slides processed successfully!");
 
     Ok(())
 }

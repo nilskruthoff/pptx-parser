@@ -1,28 +1,26 @@
-//! Basic usage example for the pptx-to-md crate
+//! Manually extract images while parsing either a PPTX or ODP presentation.
 //!
-//! This example demonstrates how to open a PPTX file and convert all slides to Markdown.
-//!
-//! Run with: cargo run --example manual_image_extraction <path/to/your/presentation.pptx>
+//! Run with:
+//! cargo run --example manual_image_extraction <presentation.pptx|presentation.odp>
 
 use base64::Engine;
 use base64::engine::general_purpose;
-use pptx_to_md::{ImageHandlingMode, ParserConfig, PptxContainer, Result};
+use pptx_to_md::{ImageHandlingMode, ParserConfig, PresentationContainer, Result};
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::{env, fs};
 
 fn main() -> Result<()> {
-    // Get the PPTX file path from command line arguments
     let args: Vec<String> = env::args().collect();
-    let pptx_path = if args.len() > 1 {
-        &args[1]
-    } else {
-        eprintln!("Usage: cargo run --example manual_image_extraction <path/to/presentation.pptx>");
+    let Some(input_path) = args.get(1) else {
+        eprintln!(
+            "Usage: cargo run --example manual_image_extraction <presentation.pptx|presentation.odp>"
+        );
         return Ok(());
     };
 
-    println!("Processing PPTX file: {}", pptx_path);
+    println!("Processing presentation: {input_path}");
 
     // Use the config builder to build your config
     let config = ParserConfig::builder()
@@ -32,8 +30,7 @@ fn main() -> Result<()> {
         .image_handling_mode(ImageHandlingMode::Manually)
         .build();
 
-    // Open the PPTX file
-    let mut container = PptxContainer::open(Path::new(pptx_path), config)?;
+    let mut container = PresentationContainer::open(Path::new(input_path), config)?;
 
     // Parse all slides
     let slides = container.parse_all()?;
@@ -47,12 +44,11 @@ fn main() -> Result<()> {
     let output_dir = "extracted_images";
     fs::create_dir_all(output_dir)?;
 
-    // Process slides one by one using the iterator
     let mut image_count = 1;
 
     // Convert each slide to Markdown and save
     for slide in slides {
-        writeln!(md_file, "{}", slide.convert_to_md()?).expect("Couldn't write to file");
+        writeln!(md_file, "{}", slide.convert_to_md()?)?;
 
         // Manually load the base64 encoded image strings from the slide
         if let Some(images) = slide.load_images_manually() {
@@ -60,7 +56,7 @@ fn main() -> Result<()> {
                 // Decode the base64 strings back to raw image data
                 let image_data = general_purpose::STANDARD
                     .decode(image.base64_content.clone())
-                    .unwrap();
+                    .expect("parser returned invalid base64 image data");
 
                 // Extract image extension if the image is not compressed, otherwise its always `.jpg`
                 let ext = if slide.config.compress_images {
@@ -85,8 +81,7 @@ fn main() -> Result<()> {
                     md_file,
                     "![{}](data:image/{};base64,{})",
                     file_name, ext, image.base64_content
-                )
-                .expect("Couldn't write to file");
+                )?;
 
                 image_count += 1;
             }

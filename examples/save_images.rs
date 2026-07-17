@@ -1,53 +1,34 @@
-//! Basic usage example for the pptx-to-md crate
+//! Save presentation images next to the generated Markdown instead of embedding them.
 //!
-//! This example demonstrates how to open a PPTX file and convert all slides to Markdown.
-//!
-//! Run with: cargo run --example save_images <path/to/your/presentation.pptx>
+//! Run with:
+//! cargo run --example save_images <presentation.pptx|presentation.odp> [image-directory] [output.md]
 
-use pptx_to_md::{ImageHandlingMode, ParserConfig, PptxContainer, Result};
+use pptx_to_md::{ImageHandlingMode, ParserConfig, PresentationContainer, Result};
 use std::env;
-use std::fs::File;
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 fn main() -> Result<()> {
-    // Get the PPTX file path from command line arguments and provide the mandatory output path
     let args: Vec<String> = env::args().collect();
-    let pptx_path = if args.len() > 1 {
-        &args[1]
-    } else {
-        eprintln!("Usage: cargo run --example save_images <path/to/presentation.pptx>");
+    let Some(input_path) = args.get(1) else {
+        eprintln!(
+            "Usage: cargo run --example save_images <presentation.pptx|presentation.odp> [image-directory] [output.md]"
+        );
         return Ok(());
     };
+    let image_directory = args
+        .get(2)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("extracted_images"));
+    let output_path = args.get(3).map(String::as_str).unwrap_or("output.md");
 
-    println!("Processing PPTX file: {}", pptx_path);
-
-    // Use the config builder to build your config
     let config = ParserConfig::builder()
-        .extract_images(true)
-        .compress_images(true)
-        .quality(75)
         .image_handling_mode(ImageHandlingMode::Save)
-        .image_output_path(PathBuf::from("C:/Users/nilsk/Downloads/extracted_images"))
+        .image_output_path(image_directory)
         .build();
+    let mut presentation = PresentationContainer::open(Path::new(input_path), config)?;
 
-    // Open the PPTX file
-    let mut container = PptxContainer::open(Path::new(pptx_path), config)?;
-
-    // Parse all slides
-    let slides = container.parse_all()?;
-
-    println!("Found {} slides", slides.len());
-
-    // create a new Markdown file
-    let mut md_file = File::create("output.md")?;
-
-    // Convert each slide to Markdown and save the images automatically
-    for slide in slides {
-        writeln!(md_file, "{}", slide.convert_to_md()?).expect("Couldn't write to file");
-    }
-
-    println!("All slides converted successfully!");
-
+    fs::write(output_path, presentation.convert_to_md()?)?;
+    println!("Saved Markdown to {output_path}");
     Ok(())
 }
