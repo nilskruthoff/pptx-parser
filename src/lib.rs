@@ -9,6 +9,7 @@ mod parser_config;
 mod presentation;
 mod slide;
 mod types;
+mod xml;
 
 pub use container::PptxContainer;
 pub use metadata::PresentationMetadata;
@@ -22,8 +23,12 @@ pub enum Error {
     #[error("Zip error: {0}")]
     Zip(#[from] zip::result::ZipError),
 
-    #[error("XML parse error: {0}")]
-    Xml(#[from] roxmltree::Error),
+    #[error("XML parse error in {part}: {source}")]
+    Xml {
+        part: String,
+        #[source]
+        source: quick_xml::Error,
+    },
 
     #[error("UTF-8 conversion error: {0}")]
     Utf8(#[from] std::str::Utf8Error),
