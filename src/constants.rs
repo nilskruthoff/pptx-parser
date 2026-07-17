@@ -1,9 +1,14 @@
 pub const P_NAMESPACE: &str = "http://schemas.openxmlformats.org/presentationml/2006/main";
 pub const A_NAMESPACE: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
-pub const RELS_NAMESPACE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-pub const IMAGE_NAMESPACE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
-pub const SLIDE_LAYOUT_NAMESPACE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout";
-pub const SLIDE_MASTER_NAMESPACE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster";
-pub const NOTES_SLIDE_NAMESPACE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
-pub const COMMENTS_NAMESPACE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
-pub const HYPERLINK_NAMESPACE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+pub const IMAGE_NAMESPACE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+pub const SLIDE_LAYOUT_NAMESPACE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout";
+pub const SLIDE_MASTER_NAMESPACE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster";
+pub const NOTES_SLIDE_NAMESPACE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide";
+pub const COMMENTS_NAMESPACE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
+pub const HYPERLINK_NAMESPACE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
