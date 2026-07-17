@@ -177,3 +177,7 @@ impl ParserConfigBuilder {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/parser_config.rs"]
+mod tests;

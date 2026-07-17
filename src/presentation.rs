@@ -1,6 +1,6 @@
 use crate::container::SlideIterator;
 use crate::odp::{OdpContainer, OdpSlideIterator};
-use crate::{ParserConfig, PptxContainer, PresentationMetadata, Result, Slide};
+use crate::{ParserConfig, PptxContainer, Presentation, PresentationMetadata, Result, Slide};
 use std::io::Read;
 use std::path::Path;
 
@@ -65,6 +65,21 @@ impl PresentationContainer {
             ContainerInner::Pptx(container) => container.parse_all(),
             ContainerInner::Odp(container) => container.parse_all(),
         }
+    }
+
+    /// Parses the complete presentation into the semantic document model.
+    pub fn parse_document(&mut self) -> Result<Presentation> {
+        let metadata = self.metadata().clone();
+        let slides = self.parse_all()?;
+        let diagnostics = slides
+            .iter()
+            .flat_map(|slide| slide.diagnostics.iter().cloned())
+            .collect();
+        Ok(Presentation {
+            metadata,
+            slides,
+            diagnostics,
+        })
     }
 
     pub fn parse_all_multi_threaded(&mut self) -> Result<Vec<Slide>> {

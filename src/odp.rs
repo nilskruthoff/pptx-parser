@@ -1,30 +1,36 @@
 use crate::metadata::{parse_odp_metadata, render_presentation_markdown};
-use crate::{
-    ElementPosition, Error, Formatting, ImageReference, ListElement, ListItem, ParserConfig,
-    PresentationMetadata, Result, Run, Slide, SlideElement, TableCell, TableElement, TableRow,
-    TextElement,
+use crate::xml::{
+    XmlReader, attr, element_is, end_is, event, reader, reference, skip_element, text,
 };
-use roxmltree::{Document, Node};
+use crate::{
+    ElementPosition, Error, Formatting, ImageReference, ListElement, ListItem, Paragraph,
+    ParseDiagnostic, ParserConfig, PresentationMetadata, Result, Run, Slide, SlideBlock,
+    SlideBlockContent, SlideElement, TableCell, TableElement, TableRow, TextBlock, TextElement,
+    TextRole,
+};
+use quick_xml::events::{BytesStart, Event};
 use std::collections::HashMap;
 use std::io::Read;
+use std::ops::Range;
 use std::path::Path;
 
 const DRAW_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
-const OFFICE_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
 const STYLE_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
 const TEXT_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
 const TABLE_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:table:1.0";
-const SVG_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0";
-const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
-const FO_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0";
 const PRESENTATION_NS: &str = "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0";
+
+struct PageIndex {
+    range: Range<usize>,
+    namespaces: Vec<(String, String)>,
+}
 
 pub(crate) struct OdpContainer {
     config: ParserConfig,
     archive: zip::ZipArchive<std::fs::File>,
     content: Vec<u8>,
-    styles: Vec<u8>,
-    page_count: usize,
+    pages: Vec<PageIndex>,
+    styles: StyleResolver,
     metadata: PresentationMetadata,
 }
 
@@ -33,23 +39,23 @@ impl OdpContainer {
         let file = std::fs::File::open(path)?;
         let mut archive = zip::ZipArchive::new(file)?;
         let content = read_archive_file(&mut archive, "content.xml")?;
-        let styles = read_archive_file(&mut archive, "styles.xml").unwrap_or_default();
+        let style_xml = read_archive_file(&mut archive, "styles.xml").unwrap_or_default();
         let meta = read_optional_archive_file(&mut archive, "meta.xml")?;
-        let page_count = presentation_page_count(&content)?;
+        let styles = StyleResolver::from_documents(&content, &style_xml)?;
+        let pages = index_pages(&content)?;
         let metadata = parse_odp_metadata(meta.as_deref())?;
-
         Ok(Self {
             config,
             archive,
             content,
+            pages,
             styles,
-            page_count,
             metadata,
         })
     }
 
     pub(crate) fn parse_all(&mut self) -> Result<Vec<Slide>> {
-        (0..self.page_count)
+        (0..self.pages.len())
             .map(|index| self.load_slide(index))
             .collect()
     }
@@ -68,17 +74,11 @@ impl OdpContainer {
     }
 
     fn load_slide(&mut self, index: usize) -> Result<Slide> {
-        let content = std::str::from_utf8(&self.content)
-            .map_err(|_| Error::ParseError("ODP XML is not UTF-8"))?;
-        let document = Document::parse(content)?;
-        let page = presentation_pages(&document)
-            .nth(index)
-            .ok_or(Error::SlideNotFound)?;
-        let styles = StyleResolver::from_documents(&self.content, &self.styles)?;
-        let elements = parse_page(page, &styles)?;
-        let speaker_notes = parse_speaker_notes(page, &styles)?;
-        let comments = parse_comments(page, &styles)?;
-        let images: Vec<ImageReference> = elements
+        let page = self.pages.get(index).ok_or(Error::SlideNotFound)?;
+        let fragment = page_fragment(&self.content[page.range.clone()], &page.namespaces);
+        let mut parsed = parse_page_fragment(&fragment, &self.styles)?;
+        let images: Vec<ImageReference> = parsed
+            .elements
             .iter()
             .filter_map(|element| match element {
                 SlideElement::Image(image, _) => Some(image.clone()),
@@ -88,21 +88,29 @@ impl OdpContainer {
         let mut image_data = HashMap::new();
         if self.config.extract_images {
             for image in &images {
-                if let Ok(data) = read_archive_file(&mut self.archive, &image.target) {
-                    image_data.insert(image.id.clone(), data);
+                match read_archive_file(&mut self.archive, &image.target) {
+                    Ok(data) => {
+                        image_data.insert(image.id.clone(), data);
+                    }
+                    Err(error) => parsed.diagnostics.push(ParseDiagnostic {
+                        severity: crate::DiagnosticSeverity::Warning,
+                        message: format!("Image resource could not be loaded: {error}"),
+                        source: Some(image.target.clone()),
+                    }),
                 }
             }
         }
-
-        Ok(Slide::new(
+        Ok(Slide::new_semantic(
             format!("content.xml#page{}", index + 1),
             (index + 1) as u32,
-            elements,
-            speaker_notes,
-            comments,
+            parsed.elements,
+            parsed.blocks,
+            parsed.speaker_notes,
+            parsed.comments,
             images,
             image_data,
             self.config.clone(),
+            parsed.diagnostics,
         ))
     }
 
@@ -123,7 +131,7 @@ impl Iterator for OdpSlideIterator<'_> {
     type Item = Result<Slide>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current_index >= self.container.page_count {
+        if self.current_index >= self.container.pages.len() {
             return None;
         }
         let index = self.current_index;
@@ -153,19 +161,130 @@ fn read_optional_archive_file(
     Ok(Some(bytes))
 }
 
-fn presentation_page_count(xml: &[u8]) -> Result<usize> {
-    let xml = std::str::from_utf8(xml).map_err(|_| Error::ParseError("ODP XML is not UTF-8"))?;
-    let document = Document::parse(xml)?;
-    Ok(presentation_pages(&document).count())
+fn index_pages(content: &[u8]) -> Result<Vec<PageIndex>> {
+    let mut xml = reader(content);
+    let mut namespace_values: HashMap<String, Vec<String>> = HashMap::new();
+    let mut scopes: Vec<Vec<String>> = Vec::new();
+    let mut pages = Vec::new();
+    let mut page_start = None;
+    let mut page_depth = 0usize;
+    let mut page_namespaces = Vec::new();
+    loop {
+        let event_start = xml.buffer_position() as usize;
+        match event(&mut xml, "ODP content.xml")? {
+            Event::Start(element) => {
+                let declared = push_namespace_declarations(&element, &mut namespace_values);
+                scopes.push(declared);
+                if page_start.is_some() {
+                    page_depth += 1;
+                } else if element_is(&xml, &element, DRAW_NS, b"page") {
+                    page_start = Some(event_start);
+                    page_depth = 1;
+                    page_namespaces = namespace_values
+                        .iter()
+                        .filter_map(|(name, values)| {
+                            values.last().map(|value| (name.clone(), value.clone()))
+                        })
+                        .collect();
+                }
+            }
+            Event::Empty(element)
+                if page_start.is_none() && element_is(&xml, &element, DRAW_NS, b"page") =>
+            {
+                let mut namespaces: Vec<_> = namespace_values
+                    .iter()
+                    .filter_map(|(name, values)| {
+                        values.last().map(|value| (name.clone(), value.clone()))
+                    })
+                    .collect();
+                for attribute in element.attributes().with_checks(false).flatten() {
+                    let name = String::from_utf8_lossy(attribute.key.as_ref());
+                    if name == "xmlns" || name.starts_with("xmlns:") {
+                        namespaces.push((
+                            name.into_owned(),
+                            String::from_utf8_lossy(attribute.value.as_ref()).into_owned(),
+                        ));
+                    }
+                }
+                pages.push(PageIndex {
+                    range: event_start..xml.buffer_position() as usize,
+                    namespaces,
+                });
+            }
+            Event::End(_) => {
+                if page_start.is_some() {
+                    page_depth -= 1;
+                    if page_depth == 0 {
+                        pages.push(PageIndex {
+                            range: page_start.take().unwrap()..xml.buffer_position() as usize,
+                            namespaces: std::mem::take(&mut page_namespaces),
+                        });
+                    }
+                }
+                if let Some(declared) = scopes.pop() {
+                    pop_namespace_declarations(declared, &mut namespace_values);
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    if page_start.is_some() {
+        return Err(Error::ParseError("Unexpected end of ODP page"));
+    }
+    Ok(pages)
 }
 
-fn presentation_pages<'a>(document: &'a Document<'a>) -> impl Iterator<Item = Node<'a, 'a>> + 'a {
-    document
-        .descendants()
-        .find(|node| is_element(*node, OFFICE_NS, "presentation"))
-        .into_iter()
-        .flat_map(|presentation| presentation.children())
-        .filter(|node| is_element(*node, DRAW_NS, "page"))
+fn push_namespace_declarations(
+    element: &BytesStart<'_>,
+    namespaces: &mut HashMap<String, Vec<String>>,
+) -> Vec<String> {
+    let mut declared = Vec::new();
+    for attribute in element.attributes().with_checks(false).flatten() {
+        let name = String::from_utf8_lossy(attribute.key.as_ref());
+        if name == "xmlns" || name.starts_with("xmlns:") {
+            let name = name.into_owned();
+            namespaces
+                .entry(name.clone())
+                .or_default()
+                .push(String::from_utf8_lossy(attribute.value.as_ref()).into_owned());
+            declared.push(name);
+        }
+    }
+    declared
+}
+
+fn pop_namespace_declarations(
+    declared: Vec<String>,
+    namespaces: &mut HashMap<String, Vec<String>>,
+) {
+    for name in declared {
+        let remove = if let Some(values) = namespaces.get_mut(&name) {
+            values.pop();
+            values.is_empty()
+        } else {
+            false
+        };
+        if remove {
+            namespaces.remove(&name);
+        }
+    }
+}
+
+fn page_fragment(page: &[u8], namespaces: &[(String, String)]) -> Vec<u8> {
+    let mut fragment = Vec::with_capacity(page.len() + namespaces.len() * 48 + 32);
+    fragment.extend_from_slice(b"<odp-fragment");
+    for (name, value) in namespaces {
+        fragment.push(b' ');
+        fragment.extend_from_slice(name.as_bytes());
+        fragment.extend_from_slice(b"=\"");
+        fragment.extend_from_slice(quick_xml::escape::escape(value).as_bytes());
+        fragment.push(b'"');
+    }
+    fragment.push(b'>');
+    fragment.extend_from_slice(page);
+    fragment.extend_from_slice(b"</odp-fragment>");
+    fragment
 }
 
 #[derive(Default, Clone)]
@@ -173,6 +292,9 @@ struct PartialFormatting {
     bold: Option<bool>,
     italic: Option<bool>,
     underlined: Option<bool>,
+    strikethrough: Option<bool>,
+    baseline: Option<crate::Baseline>,
+    font_size_points: Option<f32>,
     lang: Option<String>,
 }
 
@@ -186,6 +308,15 @@ impl PartialFormatting {
         }
         if let Some(value) = self.underlined {
             formatting.underlined = value;
+        }
+        if let Some(value) = self.strikethrough {
+            formatting.strikethrough = value;
+        }
+        if let Some(value) = self.baseline {
+            formatting.baseline = value;
+        }
+        if let Some(value) = self.font_size_points {
+            formatting.font_size_points = Some(value);
         }
         if let Some(value) = &self.lang {
             formatting.lang = value.clone();
@@ -207,62 +338,86 @@ struct StyleResolver {
 impl StyleResolver {
     fn from_documents(content: &[u8], styles: &[u8]) -> Result<Self> {
         let mut resolver = Self::default();
-        for xml in [content, styles] {
-            if xml.is_empty() {
-                continue;
+        for (part, data) in [("ODP content.xml", content), ("ODP styles.xml", styles)] {
+            if !data.is_empty() {
+                resolver.collect(data, part)?;
             }
-            let xml = std::str::from_utf8(xml)
-                .map_err(|_| Error::ParseError("ODP style XML is not UTF-8"))?;
-            let document = Document::parse(xml)?;
-            resolver.collect(&document);
         }
         Ok(resolver)
     }
 
-    fn collect(&mut self, document: &Document<'_>) {
-        for node in document
-            .descendants()
-            .filter(|node| is_element(*node, STYLE_NS, "style"))
-        {
-            let Some(name) = node.attribute((STYLE_NS, "name")) else {
-                continue;
-            };
-            let formatting = node
-                .children()
-                .find(|child| is_element(*child, STYLE_NS, "text-properties"))
-                .map(parse_formatting_properties)
-                .unwrap_or_default();
-            self.styles.insert(
-                name.to_string(),
-                StyleDefinition {
-                    parent: node
-                        .attribute((STYLE_NS, "parent-style-name"))
-                        .map(str::to_string),
-                    formatting,
-                },
-            );
-        }
-
-        for list_style in document
-            .descendants()
-            .filter(|node| is_element(*node, TEXT_NS, "list-style"))
-        {
-            let Some(name) = list_style.attribute((STYLE_NS, "name")) else {
-                continue;
-            };
-            for level in list_style.children().filter(|child| child.is_element()) {
-                let ordered = is_element(level, TEXT_NS, "list-level-style-number");
-                if !ordered && !is_element(level, TEXT_NS, "list-level-style-bullet") {
-                    continue;
+    fn collect(&mut self, data: &[u8], part: &str) -> Result<()> {
+        let mut xml = reader(data);
+        loop {
+            match event(&mut xml, part)? {
+                Event::Start(element) if element_is(&xml, &element, STYLE_NS, b"style") => {
+                    self.parse_style(&mut xml, &element, part)?;
                 }
-                let level_number = level
-                    .attribute((TEXT_NS, "level"))
-                    .and_then(|value| value.parse().ok())
-                    .unwrap_or(1);
-                self.list_levels
-                    .insert((name.to_string(), level_number), ordered);
+                Event::Start(element) if element_is(&xml, &element, TEXT_NS, b"list-style") => {
+                    self.parse_list_style(&mut xml, &element, part)?;
+                }
+                Event::Eof => break,
+                _ => {}
             }
         }
+        Ok(())
+    }
+
+    fn parse_style(
+        &mut self,
+        xml: &mut XmlReader<'_>,
+        start: &BytesStart<'_>,
+        part: &str,
+    ) -> Result<()> {
+        let name = attr(start, b"name");
+        let parent = attr(start, b"parent-style-name");
+        let mut formatting = PartialFormatting::default();
+        loop {
+            match event(xml, part)? {
+                Event::Start(element) | Event::Empty(element)
+                    if element_is(xml, &element, STYLE_NS, b"text-properties") =>
+                {
+                    formatting = parse_formatting_properties(&element);
+                }
+                Event::End(element) if end_is(element.name().as_ref(), b"style") => break,
+                Event::Eof => return Err(Error::ParseError("Unexpected end of ODP style")),
+                _ => {}
+            }
+        }
+        if let Some(name) = name {
+            self.styles
+                .insert(name, StyleDefinition { parent, formatting });
+        }
+        Ok(())
+    }
+
+    fn parse_list_style(
+        &mut self,
+        xml: &mut XmlReader<'_>,
+        start: &BytesStart<'_>,
+        part: &str,
+    ) -> Result<()> {
+        let name = attr(start, b"name");
+        loop {
+            match event(xml, part)? {
+                Event::Start(element) | Event::Empty(element) => {
+                    let ordered = element_is(xml, &element, TEXT_NS, b"list-level-style-number");
+                    let bullet = element_is(xml, &element, TEXT_NS, b"list-level-style-bullet");
+                    if (ordered || bullet)
+                        && let Some(name) = &name
+                    {
+                        let level = attr(&element, b"level")
+                            .and_then(|value| value.parse().ok())
+                            .unwrap_or(1);
+                        self.list_levels.insert((name.clone(), level), ordered);
+                    }
+                }
+                Event::End(element) if end_is(element.name().as_ref(), b"list-style") => break,
+                Event::Eof => return Err(Error::ParseError("Unexpected end of ODP list style")),
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     fn formatting(&self, style_name: Option<&str>, base: Formatting) -> Formatting {
@@ -290,16 +445,28 @@ impl StyleResolver {
     }
 }
 
-fn parse_formatting_properties(node: Node<'_, '_>) -> PartialFormatting {
+fn parse_formatting_properties(element: &BytesStart<'_>) -> PartialFormatting {
     PartialFormatting {
-        bold: node.attribute((FO_NS, "font-weight")).map(is_enabled),
-        italic: node
-            .attribute((FO_NS, "font-style"))
-            .map(|value| value.eq_ignore_ascii_case("italic")),
-        underlined: node
-            .attribute((STYLE_NS, "text-underline-style"))
+        bold: attr(element, b"font-weight").map(|value| is_enabled(&value)),
+        italic: attr(element, b"font-style").map(|value| value.eq_ignore_ascii_case("italic")),
+        underlined: attr(element, b"text-underline-style")
             .map(|value| !value.eq_ignore_ascii_case("none")),
-        lang: node.attribute((FO_NS, "language")).map(str::to_string),
+        strikethrough: attr(element, b"text-line-through-style")
+            .map(|value| !value.eq_ignore_ascii_case("none")),
+        baseline: attr(element, b"text-position").and_then(|value| {
+            let value = value.to_ascii_lowercase();
+            if value.starts_with("super") || value.starts_with('+') {
+                Some(crate::Baseline::Superscript)
+            } else if value.starts_with("sub") || value.starts_with('-') {
+                Some(crate::Baseline::Subscript)
+            } else {
+                None
+            }
+        }),
+        font_size_points: attr(element, b"font-size")
+            .and_then(|value| value.strip_suffix("pt").map(str::to_string))
+            .and_then(|value| value.parse().ok()),
+        lang: attr(element, b"language"),
     }
 }
 
@@ -307,299 +474,733 @@ fn is_enabled(value: &str) -> bool {
     matches!(value, "bold" | "700" | "800" | "900")
 }
 
-fn parse_page(page: Node<'_, '_>, styles: &StyleResolver) -> Result<Vec<SlideElement>> {
-    let mut elements = Vec::new();
-    for child in page.children().filter(|node| node.is_element()) {
-        parse_node(child, ElementPosition::default(), styles, &mut elements)?;
-    }
-    Ok(elements)
+#[derive(Default)]
+struct ParsedPage {
+    elements: Vec<SlideElement>,
+    blocks: Vec<SlideBlock>,
+    speaker_notes: Vec<TextElement>,
+    comments: Vec<TextElement>,
+    diagnostics: Vec<ParseDiagnostic>,
 }
 
-fn parse_speaker_notes(page: Node<'_, '_>, styles: &StyleResolver) -> Result<Vec<TextElement>> {
-    let mut elements = Vec::new();
-    for notes in page
-        .children()
-        .filter(|node| is_element(*node, PRESENTATION_NS, "notes"))
-    {
-        for child in notes.children().filter(|node| node.is_element()) {
-            parse_node(child, ElementPosition::default(), styles, &mut elements)?;
+enum PageSection {
+    Main,
+    Notes,
+    Comment,
+}
+
+struct TextContainerContext {
+    position: ElementPosition,
+    bounds: crate::Bounds,
+    section: PageSection,
+    role: TextRole,
+}
+
+fn parse_page_fragment(data: &[u8], styles: &StyleResolver) -> Result<ParsedPage> {
+    let mut xml = reader(data);
+    loop {
+        match event(&mut xml, "ODP page")? {
+            Event::Start(element) if element_is(&xml, &element, DRAW_NS, b"page") => {
+                let mut page = ParsedPage::default();
+                parse_container(
+                    &mut xml,
+                    b"page",
+                    ElementPosition::default(),
+                    PageSection::Main,
+                    styles,
+                    &mut page,
+                )?;
+                return Ok(page);
+            }
+            Event::Empty(element) if element_is(&xml, &element, DRAW_NS, b"page") => {
+                return Ok(ParsedPage::default());
+            }
+            Event::Eof => return Err(Error::ParseError("ODP page not found")),
+            _ => {}
         }
     }
-    Ok(elements
-        .into_iter()
-        .filter_map(|element| match element {
-            SlideElement::Text(text, _) => Some(text),
-            _ => None,
-        })
-        .collect())
 }
 
-fn parse_comments(page: Node<'_, '_>, styles: &StyleResolver) -> Result<Vec<TextElement>> {
-    let mut elements = Vec::new();
-    for annotation in page
-        .descendants()
-        .filter(|node| node.is_element() && node.tag_name().name() == "annotation")
-    {
-        parse_text_container(
-            annotation,
-            ElementPosition::default(),
-            styles,
-            &mut elements,
-        )?;
+fn parse_container(
+    xml: &mut XmlReader<'_>,
+    end: &[u8],
+    parent_position: ElementPosition,
+    section: PageSection,
+    styles: &StyleResolver,
+    page: &mut ParsedPage,
+) -> Result<()> {
+    loop {
+        match event(xml, "ODP page")? {
+            Event::Start(element) => {
+                if element_is(xml, &element, PRESENTATION_NS, b"notes") {
+                    parse_container(
+                        xml,
+                        b"notes",
+                        ElementPosition::default(),
+                        PageSection::Notes,
+                        styles,
+                        page,
+                    )?;
+                } else if crate::xml::local(element.name().as_ref()) == b"annotation" {
+                    let position = add_position(parent_position, node_position(&element));
+                    let bounds = node_bounds(&element, position);
+                    parse_text_container(
+                        xml,
+                        b"annotation",
+                        TextContainerContext {
+                            position,
+                            bounds,
+                            section: PageSection::Comment,
+                            role: TextRole::Other,
+                        },
+                        styles,
+                        page,
+                    )?;
+                } else {
+                    parse_node(xml, &element, parent_position, &section, styles, page)?;
+                }
+            }
+            Event::Empty(element) => {
+                parse_empty_node(&element, parent_position, &section, page);
+            }
+            Event::End(element) if end_is(element.name().as_ref(), end) => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of ODP container")),
+            _ => {}
+        }
     }
-    Ok(elements
-        .into_iter()
-        .filter_map(|element| match element {
-            SlideElement::Text(text, _) => Some(text),
-            _ => None,
-        })
-        .collect())
+    Ok(())
 }
 
 fn parse_node(
-    node: Node<'_, '_>,
+    xml: &mut XmlReader<'_>,
+    start: &BytesStart<'_>,
     parent_position: ElementPosition,
+    section: &PageSection,
     styles: &StyleResolver,
-    elements: &mut Vec<SlideElement>,
+    page: &mut ParsedPage,
 ) -> Result<()> {
-    let position = add_position(parent_position, node_position(node));
-    if is_element(node, DRAW_NS, "g") {
-        for child in node.children().filter(|child| child.is_element()) {
-            parse_node(child, position, styles, elements)?;
+    let position = add_position(parent_position, node_position(start));
+    let bounds = node_bounds(start, position);
+    if element_is(xml, start, DRAW_NS, b"g") {
+        parse_container(xml, b"g", position, clone_section(section), styles, page)
+    } else if element_is(xml, start, DRAW_NS, b"frame") {
+        parse_frame(xml, start, position, bounds, section, styles, page)
+    } else if element_is(xml, start, DRAW_NS, b"custom-shape") {
+        parse_text_container(
+            xml,
+            b"custom-shape",
+            TextContainerContext {
+                position,
+                bounds,
+                section: clone_section(section),
+                role: TextRole::Other,
+            },
+            styles,
+            page,
+        )
+    } else if element_is(xml, start, TABLE_NS, b"table") {
+        let table = parse_table(xml, styles)?;
+        push_element(SlideElement::Table(table, position), section, page);
+        set_last_bounds(page, section, bounds);
+        Ok(())
+    } else {
+        let end = start.name().as_ref().to_vec();
+        skip_element(xml, &end, "ODP page")?;
+        if matches!(section, PageSection::Main) {
+            push_unsupported_odp(page, crate::xml::local(start.name().as_ref()));
         }
-    } else if is_element(node, DRAW_NS, "frame") {
-        for child in node.children().filter(|child| child.is_element()) {
-            if is_element(child, DRAW_NS, "image") {
-                if let Some(reference) = parse_image(child) {
-                    elements.push(SlideElement::Image(reference, position));
+        Ok(())
+    }
+}
+
+fn clone_section(section: &PageSection) -> PageSection {
+    match section {
+        PageSection::Main => PageSection::Main,
+        PageSection::Notes => PageSection::Notes,
+        PageSection::Comment => PageSection::Comment,
+    }
+}
+
+fn parse_empty_node(
+    element: &BytesStart<'_>,
+    parent_position: ElementPosition,
+    section: &PageSection,
+    page: &mut ParsedPage,
+) {
+    if crate::xml::local(element.name().as_ref()) == b"image"
+        && let Some(reference) = parse_image(element)
+    {
+        push_element(
+            SlideElement::Image(
+                reference,
+                add_position(parent_position, node_position(element)),
+            ),
+            section,
+            page,
+        );
+        set_last_bounds(
+            page,
+            section,
+            node_bounds(
+                element,
+                add_position(parent_position, node_position(element)),
+            ),
+        );
+    }
+}
+
+fn parse_frame(
+    xml: &mut XmlReader<'_>,
+    start: &BytesStart<'_>,
+    position: ElementPosition,
+    bounds: crate::Bounds,
+    section: &PageSection,
+    styles: &StyleResolver,
+    page: &mut ParsedPage,
+) -> Result<()> {
+    let role = odp_text_role(attr(start, b"class").as_deref());
+    let mut alt_text = attr(start, b"name");
+    loop {
+        match event(xml, "ODP frame")? {
+            Event::Start(element) if element_is(xml, &element, DRAW_NS, b"image") => {
+                if let Some(reference) = parse_image(&element) {
+                    push_element(SlideElement::Image(reference, position), section, page);
+                    set_last_bounds(page, section, bounds);
+                    set_last_image_alt(page, section, alt_text.clone());
                 }
-            } else if is_element(child, DRAW_NS, "text-box") {
-                parse_text_container(child, position, styles, elements)?;
-            } else if is_element(child, TABLE_NS, "table") {
-                elements.push(SlideElement::Table(parse_table(child, styles)?, position));
+                skip_element(xml, b"image", "ODP image")?;
             }
+            Event::Empty(element) if element_is(xml, &element, DRAW_NS, b"image") => {
+                if let Some(reference) = parse_image(&element) {
+                    push_element(SlideElement::Image(reference, position), section, page);
+                    set_last_bounds(page, section, bounds);
+                    set_last_image_alt(page, section, alt_text.clone());
+                }
+            }
+            Event::Start(element)
+                if matches!(
+                    crate::xml::local(element.name().as_ref()),
+                    b"title" | b"desc"
+                ) =>
+            {
+                let end = crate::xml::local(element.name().as_ref()).to_vec();
+                let value = read_odp_simple_text(xml, &end)?;
+                if !value.trim().is_empty() {
+                    alt_text = Some(value.trim().to_string());
+                    set_last_image_alt(page, section, alt_text.clone());
+                }
+            }
+            Event::Start(element) if element_is(xml, &element, DRAW_NS, b"text-box") => {
+                parse_text_container(
+                    xml,
+                    b"text-box",
+                    TextContainerContext {
+                        position,
+                        bounds,
+                        section: clone_section(section),
+                        role,
+                    },
+                    styles,
+                    page,
+                )?;
+            }
+            Event::Start(element) if element_is(xml, &element, TABLE_NS, b"table") => {
+                let table = parse_table(xml, styles)?;
+                push_element(SlideElement::Table(table, position), section, page);
+                set_last_bounds(page, section, bounds);
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"frame") => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of ODP frame")),
+            _ => {}
         }
-    } else if is_element(node, DRAW_NS, "custom-shape") {
-        parse_text_container(node, position, styles, elements)?;
-    } else if is_element(node, TABLE_NS, "table") {
-        elements.push(SlideElement::Table(parse_table(node, styles)?, position));
     }
     Ok(())
+}
+
+fn set_last_image_alt(page: &mut ParsedPage, section: &PageSection, alt_text: Option<String>) {
+    if !matches!(section, PageSection::Main) {
+        return;
+    }
+    if let Some(SlideBlock {
+        content: SlideBlockContent::Image(image),
+        ..
+    }) = page.blocks.last_mut()
+    {
+        image.alt_text = alt_text;
+    }
+}
+
+fn read_odp_simple_text(xml: &mut XmlReader<'_>, end: &[u8]) -> Result<String> {
+    let mut value = String::new();
+    loop {
+        match event(xml, "ODP accessible text")? {
+            Event::Text(content) => value.push_str(&text(&content, "ODP accessible text")?),
+            Event::GeneralRef(content) => {
+                value.push_str(&reference(&content, "ODP accessible text")?)
+            }
+            Event::End(element) if end_is(element.name().as_ref(), end) => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of ODP accessible text")),
+            _ => {}
+        }
+    }
+    Ok(value)
 }
 
 fn parse_text_container(
-    node: Node<'_, '_>,
-    position: ElementPosition,
+    xml: &mut XmlReader<'_>,
+    end: &[u8],
+    context: TextContainerContext,
     styles: &StyleResolver,
-    elements: &mut Vec<SlideElement>,
+    page: &mut ParsedPage,
 ) -> Result<()> {
-    let paragraphs: Vec<_> = node
-        .children()
-        .filter(|child| is_element(*child, TEXT_NS, "p") || is_element(*child, TEXT_NS, "h"))
-        .collect();
-    if !paragraphs.is_empty() {
-        let mut runs = Vec::new();
-        for paragraph in paragraphs {
-            let mut paragraph_runs = parse_paragraph(paragraph, styles);
-            if let Some(last) = paragraph_runs.last_mut() {
-                last.text.push('\n');
+    let TextContainerContext {
+        position,
+        bounds,
+        section,
+        role,
+    } = context;
+    let mut paragraphs = Vec::new();
+    loop {
+        match event(xml, "ODP text container")? {
+            Event::Start(element)
+                if element_is(xml, &element, TEXT_NS, b"p")
+                    || element_is(xml, &element, TEXT_NS, b"h") =>
+            {
+                let paragraph_role =
+                    if element_is(xml, &element, TEXT_NS, b"h") && role == TextRole::Other {
+                        TextRole::Heading
+                    } else {
+                        role
+                    };
+                if paragraph_role != role {
+                    flush_odp_text(&mut paragraphs, position, bounds, role, &section, page);
+                }
+                let mut runs = parse_paragraph(xml, &element, styles)?;
+                if let Some(last) = runs.last_mut() {
+                    last.text.push('\n');
+                }
+                if paragraph_role != role {
+                    let mut heading = vec![Paragraph::plain(runs)];
+                    flush_odp_text(
+                        &mut heading,
+                        position,
+                        bounds,
+                        paragraph_role,
+                        &section,
+                        page,
+                    );
+                } else {
+                    paragraphs.push(Paragraph::plain(runs));
+                }
             }
-            runs.append(&mut paragraph_runs);
-        }
-        if !runs.is_empty() {
-            elements.push(SlideElement::Text(TextElement { runs }, position));
+            Event::Start(element) if element_is(xml, &element, TEXT_NS, b"list") => {
+                flush_odp_text(&mut paragraphs, position, bounds, role, &section, page);
+                let list = parse_list(xml, &element, styles, 0)?;
+                push_element(SlideElement::List(list, position), &section, page);
+            }
+            Event::End(element) if end_is(element.name().as_ref(), end) => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of ODP text container")),
+            _ => {}
         }
     }
-    for list in node
-        .children()
-        .filter(|child| is_element(*child, TEXT_NS, "list"))
-    {
-        elements.push(SlideElement::List(parse_list(list, styles, 0), position));
-    }
+    flush_odp_text(&mut paragraphs, position, bounds, role, &section, page);
     Ok(())
 }
 
-fn parse_image(node: Node<'_, '_>) -> Option<ImageReference> {
-    let target = node.attribute((XLINK_NS, "href"))?.to_string();
+fn flush_odp_text(
+    paragraphs: &mut Vec<Paragraph>,
+    position: ElementPosition,
+    bounds: crate::Bounds,
+    role: TextRole,
+    section: &PageSection,
+    page: &mut ParsedPage,
+) {
+    if paragraphs.is_empty() {
+        return;
+    }
+    let runs = paragraphs
+        .iter()
+        .flat_map(|paragraph| paragraph.runs.clone())
+        .collect();
+    push_element(
+        SlideElement::Text(TextElement { runs }, position),
+        section,
+        page,
+    );
+    set_last_bounds(page, section, bounds);
+    if matches!(section, PageSection::Main)
+        && let Some(SlideBlock {
+            content: SlideBlockContent::Text(text),
+            ..
+        }) = page.blocks.last_mut()
+    {
+        *text = TextBlock {
+            role,
+            paragraphs: std::mem::take(paragraphs),
+        };
+    } else {
+        paragraphs.clear();
+    }
+}
+
+fn push_element(element: SlideElement, section: &PageSection, page: &mut ParsedPage) {
+    match section {
+        PageSection::Main => {
+            let source_order = page.blocks.len();
+            page.blocks
+                .push(crate::slide::legacy_block(&element, source_order));
+            page.elements.push(element);
+        }
+        PageSection::Notes => {
+            if let SlideElement::Text(text, _) = element {
+                page.speaker_notes.push(text);
+            }
+        }
+        PageSection::Comment => {
+            if let SlideElement::Text(text, _) = element {
+                page.comments.push(text);
+            }
+        }
+    }
+}
+
+fn push_unsupported_odp(page: &mut ParsedPage, kind: &[u8]) {
+    let kind = String::from_utf8_lossy(kind).into_owned();
+    page.diagnostics.push(ParseDiagnostic {
+        severity: crate::DiagnosticSeverity::Warning,
+        message: format!("Unsupported ODP slide element: {kind}"),
+        source: None,
+    });
+    let source_order = page.blocks.len();
+    page.blocks.push(SlideBlock {
+        bounds: crate::Bounds::default(),
+        source_order,
+        content: SlideBlockContent::Unsupported(crate::UnsupportedBlock {
+            kind,
+            fallback_text: None,
+        }),
+    });
+    page.elements.push(SlideElement::Unknown);
+}
+
+fn set_last_bounds(page: &mut ParsedPage, section: &PageSection, bounds: crate::Bounds) {
+    if matches!(section, PageSection::Main)
+        && let Some(block) = page.blocks.last_mut()
+    {
+        block.bounds = bounds;
+    }
+}
+
+fn odp_text_role(value: Option<&str>) -> TextRole {
+    match value {
+        Some("title") => TextRole::Title,
+        Some("subtitle") => TextRole::Subtitle,
+        Some("outline") | Some("body") => TextRole::Body,
+        Some("notes") => TextRole::Body,
+        _ => TextRole::Other,
+    }
+}
+
+fn parse_image(element: &BytesStart<'_>) -> Option<ImageReference> {
+    let target = attr(element, b"href")?;
     Some(ImageReference {
         id: target.clone(),
         target,
     })
 }
 
-fn parse_paragraph(node: Node<'_, '_>, styles: &StyleResolver) -> Vec<Run> {
-    let formatting = styles.formatting(
-        node.attribute((TEXT_NS, "style-name")),
-        Formatting::default(),
-    );
-    let mut runs = Vec::new();
-    collect_runs(node, formatting, styles, None, &mut runs);
-    runs
+fn parse_paragraph(
+    xml: &mut XmlReader<'_>,
+    start: &BytesStart<'_>,
+    styles: &StyleResolver,
+) -> Result<Vec<Run>> {
+    let formatting =
+        styles.formatting(attr(start, b"style-name").as_deref(), Formatting::default());
+    collect_runs(
+        xml,
+        crate::xml::local(start.name().as_ref()),
+        formatting,
+        styles,
+        None,
+    )
 }
 
 fn collect_runs(
-    node: Node<'_, '_>,
+    xml: &mut XmlReader<'_>,
+    end: &[u8],
     formatting: Formatting,
     styles: &StyleResolver,
-    link_target: Option<&str>,
-    runs: &mut Vec<Run>,
-) {
-    for child in node.children() {
-        if child.is_text() {
-            if let Some(text) = child.text().filter(|text| !text.is_empty()) {
-                runs.push(Run {
-                    text: text.to_string(),
-                    formatting: formatting.clone(),
-                    link_target: link_target.map(str::to_string),
-                });
+    link_target: Option<String>,
+) -> Result<Vec<Run>> {
+    let mut runs = Vec::new();
+    loop {
+        match event(xml, "ODP text")? {
+            Event::Text(content) => {
+                let value = text(&content, "ODP text")?;
+                if !value.is_empty() {
+                    runs.push(Run {
+                        text: value,
+                        formatting: formatting.clone(),
+                        link_target: link_target.clone(),
+                    });
+                }
             }
-        } else if is_element(child, TEXT_NS, "span") {
-            let next =
-                styles.formatting(child.attribute((TEXT_NS, "style-name")), formatting.clone());
-            collect_runs(child, next, styles, link_target, runs);
-        } else if is_element(child, TEXT_NS, "a") {
-            let target = child.attribute((XLINK_NS, "href")).or(link_target);
-            collect_runs(child, formatting.clone(), styles, target, runs);
-        } else if is_element(child, TEXT_NS, "line-break") {
-            runs.push(Run {
-                text: "\n".to_string(),
-                formatting: formatting.clone(),
-                link_target: link_target.map(str::to_string),
-            });
-        } else if is_element(child, TEXT_NS, "tab") {
-            runs.push(Run {
-                text: "\t".to_string(),
-                formatting: formatting.clone(),
-                link_target: link_target.map(str::to_string),
-            });
-        } else if is_element(child, TEXT_NS, "s") {
-            let count = child
-                .attribute((TEXT_NS, "c"))
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(1);
-            runs.push(Run {
-                text: " ".repeat(count),
-                formatting: formatting.clone(),
-                link_target: link_target.map(str::to_string),
-            });
+            Event::GeneralRef(content) => {
+                let value = reference(&content, "ODP text")?;
+                if !value.is_empty() {
+                    runs.push(Run {
+                        text: value,
+                        formatting: formatting.clone(),
+                        link_target: link_target.clone(),
+                    });
+                }
+            }
+            Event::Start(element) if element_is(xml, &element, TEXT_NS, b"span") => {
+                let next =
+                    styles.formatting(attr(&element, b"style-name").as_deref(), formatting.clone());
+                runs.extend(collect_runs(
+                    xml,
+                    b"span",
+                    next,
+                    styles,
+                    link_target.clone(),
+                )?);
+            }
+            Event::Start(element) if element_is(xml, &element, TEXT_NS, b"a") => {
+                let target = attr(&element, b"href").or_else(|| link_target.clone());
+                runs.extend(collect_runs(xml, b"a", formatting.clone(), styles, target)?);
+            }
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, TEXT_NS, b"line-break") =>
+            {
+                runs.push(special_run("\n", &formatting, link_target.as_deref()));
+            }
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, TEXT_NS, b"tab") =>
+            {
+                runs.push(special_run("\t", &formatting, link_target.as_deref()));
+            }
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, TEXT_NS, b"s") =>
+            {
+                let count = attr(&element, b"c")
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(1);
+                runs.push(special_run(
+                    &" ".repeat(count),
+                    &formatting,
+                    link_target.as_deref(),
+                ));
+            }
+            Event::End(element) if end_is(element.name().as_ref(), end) => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of ODP text")),
+            _ => {}
         }
+    }
+    Ok(runs)
+}
+
+fn special_run(value: &str, formatting: &Formatting, link_target: Option<&str>) -> Run {
+    Run {
+        text: value.to_string(),
+        formatting: formatting.clone(),
+        link_target: link_target.map(str::to_string),
     }
 }
 
-fn parse_list(node: Node<'_, '_>, styles: &StyleResolver, level: u32) -> ListElement {
-    let style_name = node.attribute((TEXT_NS, "style-name"));
+fn parse_list(
+    xml: &mut XmlReader<'_>,
+    start: &BytesStart<'_>,
+    styles: &StyleResolver,
+    level: u32,
+) -> Result<ListElement> {
+    let style_name = attr(start, b"style-name");
     let mut items = Vec::new();
-    for item in node
-        .children()
-        .filter(|child| is_element(*child, TEXT_NS, "list-item"))
-    {
-        let mut runs = Vec::new();
-        for paragraph in item
-            .children()
-            .filter(|child| is_element(*child, TEXT_NS, "p"))
-        {
-            let mut paragraph_runs = parse_paragraph(paragraph, styles);
-            if let Some(last) = paragraph_runs.last_mut() {
-                last.text.push('\n');
+    loop {
+        match event(xml, "ODP list")? {
+            Event::Start(element) if element_is(xml, &element, TEXT_NS, b"list-item") => {
+                parse_list_item(xml, styles, level, style_name.as_deref(), &mut items)?;
             }
-            runs.append(&mut paragraph_runs);
-        }
-        if !runs.is_empty() {
-            items.push(ListItem {
-                level,
-                is_ordered: styles.is_ordered_list(style_name, level),
-                runs,
-            });
-        }
-        for nested in item
-            .children()
-            .filter(|child| is_element(*child, TEXT_NS, "list"))
-        {
-            items.extend(parse_list(nested, styles, level + 1).items);
+            Event::End(element) if end_is(element.name().as_ref(), b"list") => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of ODP list")),
+            _ => {}
         }
     }
-    ListElement { items }
+    Ok(ListElement { items })
 }
 
-fn parse_table(node: Node<'_, '_>, styles: &StyleResolver) -> Result<TableElement> {
-    let mut rows = Vec::new();
-    for row in node
-        .children()
-        .filter(|child| is_element(*child, TABLE_NS, "table-row"))
-    {
-        let parsed = parse_table_row(row, styles);
-        let repeats = attribute_usize(row, TABLE_NS, "number-rows-repeated").unwrap_or(1);
-        for _ in 0..repeats {
-            rows.push(parsed.clone());
+fn parse_list_item(
+    xml: &mut XmlReader<'_>,
+    styles: &StyleResolver,
+    level: u32,
+    style_name: Option<&str>,
+    items: &mut Vec<ListItem>,
+) -> Result<()> {
+    let mut runs = Vec::new();
+    let mut nested = Vec::new();
+    loop {
+        match event(xml, "ODP list item")? {
+            Event::Start(element) if element_is(xml, &element, TEXT_NS, b"p") => {
+                let mut paragraph = parse_paragraph(xml, &element, styles)?;
+                if let Some(last) = paragraph.last_mut() {
+                    last.text.push('\n');
+                }
+                runs.append(&mut paragraph);
+            }
+            Event::Start(element) if element_is(xml, &element, TEXT_NS, b"list") => {
+                nested.extend(parse_list(xml, &element, styles, level + 1)?.items);
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"list-item") => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of ODP list item")),
+            _ => {}
         }
     }
-    let width = rows
-        .iter()
-        .map(|row: &TableRow| row.cells.len())
-        .max()
-        .unwrap_or(0);
-    for row in &mut rows {
-        while row.cells.len() < width {
-            row.cells.push(TableCell { runs: Vec::new() });
+    if !runs.is_empty() {
+        items.push(ListItem {
+            level,
+            is_ordered: styles.is_ordered_list(style_name, level),
+            runs,
+        });
+    }
+    items.extend(nested);
+    Ok(())
+}
+
+fn parse_table(xml: &mut XmlReader<'_>, styles: &StyleResolver) -> Result<TableElement> {
+    let mut rows = Vec::new();
+    loop {
+        match event(xml, "ODP table")? {
+            Event::Start(element) if element_is(xml, &element, TABLE_NS, b"table-row") => {
+                let repeats = usize_attr(&element, b"number-rows-repeated").unwrap_or(1);
+                let row = parse_table_row(xml, styles)?;
+                rows.extend(std::iter::repeat_n(row, repeats));
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"table") => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of ODP table")),
+            _ => {}
         }
+    }
+    let width = rows.iter().map(|row| row.cells.len()).max().unwrap_or(0);
+    for row in &mut rows {
+        row.cells.resize_with(width, TableCell::default);
     }
     Ok(TableElement { rows })
 }
 
-fn parse_table_row(node: Node<'_, '_>, styles: &StyleResolver) -> TableRow {
+fn parse_table_row(xml: &mut XmlReader<'_>, styles: &StyleResolver) -> Result<TableRow> {
     let mut cells = Vec::new();
-    for cell in node.children().filter(|child| {
-        is_element(*child, TABLE_NS, "table-cell")
-            || is_element(*child, TABLE_NS, "covered-table-cell")
-    }) {
-        let parsed = if is_element(cell, TABLE_NS, "covered-table-cell") {
-            TableCell { runs: Vec::new() }
-        } else {
-            parse_table_cell(cell, styles)
-        };
-        let repeats = attribute_usize(cell, TABLE_NS, "number-columns-repeated").unwrap_or(1);
-        let spans = attribute_usize(cell, TABLE_NS, "number-columns-spanned").unwrap_or(1);
-        for _ in 0..repeats {
-            cells.push(parsed.clone());
-            for _ in 1..spans {
-                cells.push(TableCell { runs: Vec::new() });
+    loop {
+        match event(xml, "ODP table row")? {
+            Event::Start(element)
+                if element_is(xml, &element, TABLE_NS, b"table-cell")
+                    || element_is(xml, &element, TABLE_NS, b"covered-table-cell") =>
+            {
+                let covered = element_is(xml, &element, TABLE_NS, b"covered-table-cell");
+                let repeats = usize_attr(&element, b"number-columns-repeated").unwrap_or(1);
+                let spans = usize_attr(&element, b"number-columns-spanned").unwrap_or(1);
+                let cell = if covered {
+                    skip_element(xml, b"covered-table-cell", "ODP covered cell")?;
+                    TableCell {
+                        covered: true,
+                        ..TableCell::default()
+                    }
+                } else {
+                    parse_table_cell(xml, &element, styles)?
+                };
+                append_cells(&mut cells, cell, repeats, spans);
             }
+            Event::Empty(element)
+                if element_is(xml, &element, TABLE_NS, b"table-cell")
+                    || element_is(xml, &element, TABLE_NS, b"covered-table-cell") =>
+            {
+                append_cells(
+                    &mut cells,
+                    TableCell::default(),
+                    usize_attr(&element, b"number-columns-repeated").unwrap_or(1),
+                    usize_attr(&element, b"number-columns-spanned").unwrap_or(1),
+                );
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"table-row") => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of ODP table row")),
+            _ => {}
         }
     }
-    TableRow { cells }
+    Ok(TableRow { cells })
 }
 
-fn parse_table_cell(node: Node<'_, '_>, styles: &StyleResolver) -> TableCell {
+fn append_cells(cells: &mut Vec<TableCell>, mut cell: TableCell, repeats: usize, spans: usize) {
+    cell.column_span = spans.max(1);
+    for _ in 0..repeats {
+        cells.push(cell.clone());
+        cells.extend((1..spans).map(|_| TableCell {
+            covered: true,
+            ..TableCell::default()
+        }));
+    }
+}
+
+fn parse_table_cell(
+    xml: &mut XmlReader<'_>,
+    start: &BytesStart<'_>,
+    styles: &StyleResolver,
+) -> Result<TableCell> {
     let mut runs = Vec::new();
-    for paragraph in node
-        .children()
-        .filter(|child| is_element(*child, TEXT_NS, "p"))
-    {
-        let mut paragraph_runs = parse_paragraph(paragraph, styles);
-        if let Some(last) = paragraph_runs.last_mut() {
-            last.text.push('\n');
+    let mut paragraphs = Vec::new();
+    loop {
+        match event(xml, "ODP table cell")? {
+            Event::Start(element) if element_is(xml, &element, TEXT_NS, b"p") => {
+                let mut paragraph = parse_paragraph(xml, &element, styles)?;
+                if let Some(last) = paragraph.last_mut() {
+                    last.text.push('\n');
+                }
+                runs.append(&mut paragraph.clone());
+                paragraphs.push(crate::Paragraph::plain(paragraph));
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"table-cell") => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of ODP table cell")),
+            _ => {}
         }
-        runs.append(&mut paragraph_runs);
     }
-    TableCell { runs }
+    Ok(TableCell {
+        runs,
+        paragraphs,
+        row_span: usize_attr(start, b"number-rows-spanned").unwrap_or(1),
+        column_span: usize_attr(start, b"number-columns-spanned").unwrap_or(1),
+        covered: false,
+    })
 }
 
-fn node_position(node: Node<'_, '_>) -> ElementPosition {
-    let x = node
-        .attribute((SVG_NS, "x"))
+fn node_position(element: &BytesStart<'_>) -> ElementPosition {
+    let x = attr(element, b"x")
+        .as_deref()
         .and_then(parse_length)
         .unwrap_or(0);
-    let y = node
-        .attribute((SVG_NS, "y"))
+    let y = attr(element, b"y")
+        .as_deref()
         .and_then(parse_length)
         .unwrap_or(0);
-    let transform = node
-        .attribute((DRAW_NS, "transform"))
+    let transform = attr(element, b"transform")
+        .as_deref()
         .map(parse_translate)
         .unwrap_or_default();
     ElementPosition {
         x: x + transform.x,
         y: y + transform.y,
+    }
+}
+
+fn node_bounds(element: &BytesStart<'_>, position: ElementPosition) -> crate::Bounds {
+    crate::Bounds {
+        x: position.x,
+        y: position.y,
+        width: attr(element, b"width")
+            .as_deref()
+            .and_then(parse_length)
+            .unwrap_or(0),
+        height: attr(element, b"height")
+            .as_deref()
+            .and_then(parse_length)
+            .unwrap_or(0),
     }
 }
 
@@ -622,14 +1223,13 @@ fn parse_translate(value: &str) -> ElementPosition {
 }
 
 fn parse_length(value: &str) -> Option<i64> {
-    let units = [
+    for (suffix, multiplier) in [
         ("cm", 360_000.0),
         ("mm", 36_000.0),
         ("in", 914_400.0),
         ("pt", 12_700.0),
         ("px", 9_525.0),
-    ];
-    for (suffix, multiplier) in units {
+    ] {
         if let Some(number) = value.strip_suffix(suffix) {
             return number
                 .trim()
@@ -651,15 +1251,8 @@ fn add_position(left: ElementPosition, right: ElementPosition) -> ElementPositio
     }
 }
 
-fn attribute_usize(node: Node<'_, '_>, namespace: &str, name: &str) -> Option<usize> {
-    node.attribute((namespace, name))
-        .and_then(|value| value.parse().ok())
-}
-
-fn is_element(node: Node<'_, '_>, namespace: &str, name: &str) -> bool {
-    node.is_element()
-        && node.tag_name().namespace() == Some(namespace)
-        && node.tag_name().name() == name
+fn usize_attr(element: &BytesStart<'_>, name: &[u8]) -> Option<usize> {
+    attr(element, name).and_then(|value| value.parse().ok())
 }
 
 #[cfg(test)]

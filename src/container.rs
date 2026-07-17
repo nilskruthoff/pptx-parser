@@ -1,12 +1,12 @@
 use super::{Result, Slide};
+use crate::PresentationMetadata;
 use crate::constants::{
     COMMENTS_NAMESPACE, NOTES_SLIDE_NAMESPACE, SLIDE_LAYOUT_NAMESPACE, SLIDE_MASTER_NAMESPACE,
 };
 use crate::metadata::{parse_pptx_metadata, render_presentation_markdown};
 use crate::parse_rels::{parse_hyperlink_rels, parse_relationships};
-use crate::parse_xml::{extract_inherited_positions, InheritedPositions};
+use crate::parse_xml::{InheritedPositions, extract_inherited_positions};
 use crate::parser_config::ParserConfig;
-use crate::PresentationMetadata;
 use rayon::prelude::*;
 use std::sync::Arc;
 use std::{collections::HashMap, io::Read, path::Path};
@@ -153,6 +153,7 @@ impl PptxContainer {
 
             // Preload images if enabled
             let mut slide_images = Vec::new();
+            let mut resource_diagnostics = Vec::new();
             if config.extract_images {
                 if let Some(ref data) = rels_data {
                     slide_images = crate::parse_rels::parse_slide_rels(data)?;
@@ -160,8 +161,16 @@ impl PptxContainer {
 
                 for img_ref in &slide_images {
                     let path = PptxContainer::resolve_target_path(slide_path, &img_ref.target);
-                    let data = self.read_file_from_archive(&path)?;
-                    all_image_data.entry(img_ref.target.clone()).or_insert(data);
+                    match self.read_file_from_archive(&path) {
+                        Ok(data) => {
+                            all_image_data.entry(img_ref.target.clone()).or_insert(data);
+                        }
+                        Err(error) => resource_diagnostics.push(crate::ParseDiagnostic {
+                            severity: crate::DiagnosticSeverity::Warning,
+                            message: format!("Image resource could not be loaded: {error}"),
+                            source: Some(path),
+                        }),
+                    }
                 }
             }
 
@@ -174,6 +183,7 @@ impl PptxContainer {
                 speaker_notes,
                 comments,
                 hyperlinks,
+                resource_diagnostics,
             ));
         }
 
@@ -193,13 +203,15 @@ impl PptxContainer {
                     speaker_notes,
                     comments,
                     hyperlinks,
+                    resource_diagnostics,
                 )| {
                     // Parse XML in parallel (CPU-intensive)
-                    let elements = crate::parse_xml::parse_slide_xml_with_hyperlinks(
+                    let mut parsed = crate::parse_xml::parse_slide_document_with_hyperlinks(
                         &xml,
                         &inherited_positions,
                         &hyperlinks,
                     )?;
+                    parsed.diagnostics.extend(resource_diagnostics);
 
                     // Resolve image data from shared registry
                     let mut image_map = HashMap::new();
@@ -212,15 +224,17 @@ impl PptxContainer {
                     }
 
                     // Build slide
-                    let mut slide = Slide::new(
+                    let mut slide = Slide::new_semantic(
                         path,
                         number,
-                        elements,
+                        parsed.elements,
+                        parsed.blocks,
                         speaker_notes,
                         comments,
                         images,
                         image_map,
                         config.clone(),
+                        parsed.diagnostics,
                     );
                     slide.link_images();
                     Ok(slide)
@@ -274,7 +288,7 @@ impl PptxContainer {
             self.resolve_inherited_positions(slide_path, rels_data.as_deref())?;
         let speaker_notes = self.resolve_speaker_notes(slide_path, rels_data.as_deref())?;
         let comments = self.resolve_comments(slide_path, rels_data.as_deref())?;
-        let elements = crate::parse_xml::parse_slide_xml_with_hyperlinks(
+        let mut parsed = crate::parse_xml::parse_slide_document_with_hyperlinks(
             &slide_data,
             &inherited_positions,
             &hyperlinks,
@@ -291,23 +305,32 @@ impl PptxContainer {
 
             for img_ref in &images {
                 let img_path = Self::resolve_target_path(slide_path, &img_ref.target);
-                if let Ok(data) = self.read_file_from_archive(&img_path) {
-                    image_data.insert(img_ref.id.clone(), data);
+                match self.read_file_from_archive(&img_path) {
+                    Ok(data) => {
+                        image_data.insert(img_ref.id.clone(), data);
+                    }
+                    Err(error) => parsed.diagnostics.push(crate::ParseDiagnostic {
+                        severity: crate::DiagnosticSeverity::Warning,
+                        message: format!("Image resource could not be loaded: {error}"),
+                        source: Some(img_path),
+                    }),
                 }
             }
         }
 
         let config = self.config.clone();
 
-        let mut slide = Slide::new(
+        let mut slide = Slide::new_semantic(
             slide_path.to_string(),
             slide_number,
-            elements,
+            parsed.elements,
+            parsed.blocks,
             speaker_notes,
             comments,
             images,
             image_data,
             config,
+            parsed.diagnostics,
         );
 
         slide.link_images();

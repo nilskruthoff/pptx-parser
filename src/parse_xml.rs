@@ -1,23 +1,19 @@
-use crate::constants::{A_NAMESPACE, P_NAMESPACE, RELS_NAMESPACE};
+use crate::constants::{A_NAMESPACE, P_NAMESPACE};
 use crate::types::{SlideElement, TableCell, TableElement, TableRow, TextElement};
-use crate::{
-    ElementPosition, Error, Formatting, ImageReference, ListElement, ListItem, Result, Run,
+use crate::xml::{
+    XmlReader, attr, element_is, end_is, event, reader, reference, skip_element, text,
 };
-use roxmltree::{Document, Node};
+use crate::{
+    Bounds, DiagnosticSeverity, ElementPosition, Error, Formatting, ImageBlock, ImageReference,
+    ListElement, ListInfo, ListItem, ListKind, Paragraph, ParagraphAlignment, ParseDiagnostic,
+    Result, Run, SemanticTable, SemanticTableCell, SemanticTableRow, SlideBlock, SlideBlockContent,
+    TextBlock, TextRole, UnsupportedBlock,
+};
+use quick_xml::events::{BytesStart, Event};
 use std::collections::HashMap;
 
-enum ParsedContent {
-    Text(TextElement),
-    List(ListElement),
-}
+type ParsedContent = TextBlock;
 
-/// Represents the accumulated coordinate transformation from a local element space
-/// into slide-level coordinates.
-///
-/// Grouped shapes in PPTX can define their own origin (`chOff`) and size (`chExt`)
-/// which must be mapped into the enclosing group frame (`off`/`ext`). This helper
-/// stores the current scaling and translation so child elements can be converted
-/// into their effective slide position.
 #[derive(Debug, Clone, Copy)]
 struct CoordinateTransform {
     scale_x: f64,
@@ -43,8 +39,21 @@ impl CoordinateTransform {
         }
     }
 
-    fn then(self, next: CoordinateTransform) -> CoordinateTransform {
-        CoordinateTransform {
+    fn apply_bounds(self, bounds: Bounds) -> Bounds {
+        let position = self.apply(ElementPosition {
+            x: bounds.x,
+            y: bounds.y,
+        });
+        Bounds {
+            x: position.x,
+            y: position.y,
+            width: (bounds.width as f64 * self.scale_x.abs()).round() as i64,
+            height: (bounds.height as f64 * self.scale_y.abs()).round() as i64,
+        }
+    }
+
+    fn then(self, next: Self) -> Self {
+        Self {
             scale_x: self.scale_x * next.scale_x,
             scale_y: self.scale_y * next.scale_y,
             translate_x: self.scale_x * next.translate_x + self.translate_x,
@@ -53,81 +62,156 @@ impl CoordinateTransform {
     }
 }
 
-/// Identifies a placeholder shape across slide, layout, and master documents.
-///
-/// PowerPoint placeholders are primarily matched by `type` and `idx`. Some
-/// layouts omit the type attribute, so resolution falls back from exact match
-/// to looser combinations when needed.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PlaceholderKey {
     kind: Option<String>,
     idx: Option<String>,
 }
 
-/// Holds inherited placeholder positions resolved from slide layouts and masters.
 #[derive(Debug, Clone, Default)]
 pub struct InheritedPositions {
     positions: HashMap<PlaceholderKey, ElementPosition>,
+    list_styles: HashMap<PlaceholderKey, HashMap<u32, ListKind>>,
 }
 
 impl InheritedPositions {
     fn resolve(&self, key: &PlaceholderKey) -> Option<ElementPosition> {
-        self.positions
-            .get(key)
-            .copied()
-            .or_else(|| {
-                key.idx.as_ref().and_then(|idx| {
+        self.positions.get(key).copied().or_else(|| {
+            key.idx
+                .as_ref()
+                .and_then(|idx| {
                     self.positions
                         .iter()
-                        .find(|(candidate, _)| candidate.idx.as_deref() == Some(idx.as_str()))
-                        .map(|(_, position)| *position)
+                        .find(|(candidate, _)| candidate.idx.as_deref() == Some(idx))
+                })
+                .or_else(|| {
+                    key.kind.as_ref().and_then(|kind| {
+                        self.positions
+                            .iter()
+                            .find(|(candidate, _)| candidate.kind.as_deref() == Some(kind))
+                    })
+                })
+                .map(|(_, position)| *position)
+        })
+    }
+
+    fn resolve_list_kind(&self, key: &PlaceholderKey, level: u32) -> Option<ListKind> {
+        self.list_styles
+            .get(key)
+            .or_else(|| {
+                key.idx.as_ref().and_then(|idx| {
+                    self.list_styles
+                        .iter()
+                        .find(|(candidate, _)| candidate.idx.as_ref() == Some(idx))
+                        .map(|(_, styles)| styles)
                 })
             })
             .or_else(|| {
                 key.kind.as_ref().and_then(|kind| {
-                    self.positions
+                    self.list_styles
                         .iter()
-                        .find(|(candidate, _)| candidate.kind.as_deref() == Some(kind.as_str()))
-                        .map(|(_, position)| *position)
+                        .find(|(candidate, _)| candidate.kind.as_ref() == Some(kind))
+                        .map(|(_, styles)| styles)
                 })
             })
+            .and_then(|styles| styles.get(&level).or_else(|| styles.get(&0)))
+            .cloned()
     }
 }
 
-/// Parses raw XML slide data from a PowerPoint (pptx) file and extracts all slide elements.
-///
-/// This function processes a single PowerPoint slide's XML data to identify and parse its
-/// contained elements into structured variants such as text blocks, tables, images, and lists.
-/// Unrecognized or malformed elements will result in inclusion of a [`SlideElement::Unknown`] variant.
-///
-/// # Arguments
-///
-/// - `xml_data`: Byte slice containing raw XML data of a PowerPoint slide.
-///
-/// # Returns
-///
-/// Returns a `Result` containing either:
-/// - `Vec<SlideElement>`: Vector of successfully parsed slide elements.
-/// - `Error`: Error information encapsulated in [`crate::Error`] if parsing fails at XML parsing level.
-///
-/// # Errors
-///
-/// Parsing may fail and return [`Error`] if:
-/// - The provided XML data isn't valid UTF-8.
-/// - The XML structure is malformed or missing essential schema elements (`<p:cSld>` or `<p:spTree>` tags).
-///
-/// # Notes
-///
-/// - The function strictly follows Microsoft's Open XML slide schema.
-/// - For best results, ensure input XML data is extracted directly from PPTX files or equivalent sources.
+#[derive(Default)]
+struct PositionData {
+    x: Option<i64>,
+    y: Option<i64>,
+    width: Option<i64>,
+    height: Option<i64>,
+    placeholder: Option<PlaceholderKey>,
+    fallback_text: String,
+}
+
+impl PositionData {
+    fn observe_off(&mut self, element: &BytesStart<'_>) {
+        if self.x.is_none() {
+            self.x = attr(element, b"x").and_then(|value| value.parse().ok());
+            self.y = attr(element, b"y").and_then(|value| value.parse().ok());
+        }
+    }
+
+    fn observe_placeholder(&mut self, element: &BytesStart<'_>) {
+        self.placeholder = Some(PlaceholderKey {
+            kind: attr(element, b"type"),
+            idx: attr(element, b"idx"),
+        });
+    }
+
+    fn observe_ext(&mut self, element: &BytesStart<'_>) {
+        if self.width.is_none() {
+            self.width = attr(element, b"cx").and_then(|value| value.parse().ok());
+            self.height = attr(element, b"cy").and_then(|value| value.parse().ok());
+        }
+    }
+
+    fn raw(&self) -> Option<ElementPosition> {
+        Some(ElementPosition {
+            x: self.x?,
+            y: self.y?,
+        })
+    }
+
+    fn effective(
+        &self,
+        transform: CoordinateTransform,
+        inherited: &InheritedPositions,
+    ) -> ElementPosition {
+        self.raw()
+            .map(|position| transform.apply(position))
+            .or_else(|| {
+                self.placeholder
+                    .as_ref()
+                    .and_then(|key| inherited.resolve(key))
+            })
+            .unwrap_or_default()
+    }
+
+    fn effective_bounds(
+        &self,
+        transform: CoordinateTransform,
+        inherited: &InheritedPositions,
+    ) -> Bounds {
+        if let Some(position) = self.raw() {
+            transform.apply_bounds(Bounds {
+                x: position.x,
+                y: position.y,
+                width: self.width.unwrap_or(0),
+                height: self.height.unwrap_or(0),
+            })
+        } else {
+            let position = self.effective(transform, inherited);
+            Bounds {
+                x: position.x,
+                y: position.y,
+                width: (self.width.unwrap_or(0) as f64 * transform.scale_x.abs()).round() as i64,
+                height: (self.height.unwrap_or(0) as f64 * transform.scale_y.abs()).round() as i64,
+            }
+        }
+    }
+}
+
+struct ShapeData {
+    content: Option<ParsedContent>,
+    position: PositionData,
+}
+
+pub(crate) struct ParsedSlideDocument {
+    pub elements: Vec<SlideElement>,
+    pub blocks: Vec<SlideBlock>,
+    pub diagnostics: Vec<ParseDiagnostic>,
+}
+
 pub fn parse_slide_xml(xml_data: &[u8]) -> Result<Vec<SlideElement>> {
     parse_slide_xml_with_hyperlinks(xml_data, &InheritedPositions::default(), &HashMap::new())
 }
 
-/// Parses the user-authored text from a PPTX notes slide.
-///
-/// Notes slides also contain placeholders for dates, footers, and slide numbers.
-/// Only the `body` placeholder is speaker-note content and is therefore returned.
 #[cfg(test)]
 pub(crate) fn parse_speaker_notes_xml(xml_data: &[u8]) -> Result<Vec<TextElement>> {
     parse_speaker_notes_xml_with_hyperlinks(xml_data, &HashMap::new())
@@ -137,92 +221,92 @@ pub(crate) fn parse_speaker_notes_xml_with_hyperlinks(
     xml_data: &[u8],
     hyperlinks: &HashMap<String, String>,
 ) -> Result<Vec<TextElement>> {
-    let xml_str = std::str::from_utf8(xml_data).map_err(|_| Error::Unknown)?;
-    let doc = Document::parse(xml_str)?;
-    let root = doc.root_element();
-    let ns = root.tag_name().namespace();
-
-    let c_sld = root
-        .descendants()
-        .find(|node| node.tag_name().name() == "cSld" && node.tag_name().namespace() == ns)
-        .ok_or(Error::Unknown)?;
-    let sp_tree = c_sld
-        .children()
-        .find(|node| node.tag_name().name() == "spTree" && node.tag_name().namespace() == ns)
-        .ok_or(Error::Unknown)?;
-
-    let mut notes = Vec::new();
-    for shape in sp_tree.children().filter(|node| {
-        node.is_element()
-            && node.tag_name().name() == "sp"
-            && node.tag_name().namespace() == Some(P_NAMESPACE)
-            && is_notes_body_placeholder(*node)
-    }) {
-        if let Some(text_body) = shape.children().find(|node| {
-            node.is_element()
-                && node.tag_name().name() == "txBody"
-                && node.tag_name().namespace() == Some(P_NAMESPACE)
-        }) {
-            let text = parse_text_with_hyperlinks(&text_body, hyperlinks)?;
-            if !text.runs.is_empty() {
-                notes.push(text);
+    let mut xml = reader(xml_data);
+    loop {
+        match event(&mut xml, "PPTX notes")? {
+            Event::Start(element) if element_is(&xml, &element, P_NAMESPACE, b"spTree") => {
+                return parse_notes_tree(&mut xml, hyperlinks);
             }
+            Event::Eof => return Err(Error::ParseError("PPTX notes shape tree not found")),
+            _ => {}
+        }
+    }
+}
+
+fn parse_notes_tree(
+    xml: &mut XmlReader<'_>,
+    hyperlinks: &HashMap<String, String>,
+) -> Result<Vec<TextElement>> {
+    let mut notes = Vec::new();
+    loop {
+        match event(xml, "PPTX notes")? {
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"sp") => {
+                let shape = parse_shape(xml, hyperlinks)?;
+                if shape
+                    .position
+                    .placeholder
+                    .as_ref()
+                    .and_then(|key| key.kind.as_deref())
+                    == Some("body")
+                    && let Some(content) = shape.content
+                {
+                    let text = content_to_text(content);
+                    if !text.runs.is_empty() {
+                        notes.push(text);
+                    }
+                }
+            }
+            Event::Start(element) => {
+                let end = element.name().as_ref().to_vec();
+                skip_element(xml, &end, "PPTX notes")?;
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"spTree") => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of PPTX notes")),
+            _ => {}
         }
     }
     Ok(notes)
 }
 
-/// Parses text content from both legacy and modern PPTX comment parts.
 pub(crate) fn parse_comments_xml_with_hyperlinks(
     xml_data: &[u8],
     hyperlinks: &HashMap<String, String>,
 ) -> Result<Vec<TextElement>> {
-    let xml_str = std::str::from_utf8(xml_data).map_err(|_| Error::Unknown)?;
-    let doc = Document::parse(xml_str)?;
+    let mut xml = reader(xml_data);
     let mut comments = Vec::new();
-
-    for text_body in doc
-        .descendants()
-        .filter(|node| node.is_element() && node.tag_name().name() == "txBody")
-    {
-        let text = parse_text_with_hyperlinks(&text_body, hyperlinks)?;
-        if !text.runs.is_empty() {
-            comments.push(text);
-        }
-    }
-
-    if comments.is_empty() {
-        for text in doc.descendants().filter(|node| {
-            node.is_element()
-                && node.tag_name().name() == "text"
-                && node.tag_name().namespace() == Some(P_NAMESPACE)
-        }) {
-            let content = text.text().unwrap_or_default();
-            if !content.is_empty() {
-                comments.push(TextElement {
-                    runs: vec![Run {
-                        text: format!("{}\n", content),
-                        formatting: Formatting::default(),
-                        link_target: None,
-                    }],
-                });
+    let mut legacy = Vec::new();
+    loop {
+        match event(&mut xml, "PPTX comments")? {
+            Event::Start(element) if crate::xml::local(element.name().as_ref()) == b"txBody" => {
+                let content = parse_text_body(&mut xml, true, hyperlinks)?;
+                let text = content_to_text(content);
+                if !text.runs.is_empty() {
+                    comments.push(text);
+                }
             }
+            Event::Start(element) if element_is(&xml, &element, P_NAMESPACE, b"text") => {
+                let value = read_simple_text(&mut xml, b"text", "PPTX comments")?;
+                if !value.is_empty() {
+                    legacy.push(TextElement {
+                        runs: vec![Run {
+                            text: format!("{value}\n"),
+                            formatting: Formatting::default(),
+                            link_target: None,
+                        }],
+                    });
+                }
+            }
+            Event::Eof => break,
+            _ => {}
         }
     }
-
-    Ok(comments)
-}
-
-fn is_notes_body_placeholder(shape: Node<'_, '_>) -> bool {
-    shape.descendants().any(|node| {
-        node.is_element()
-            && node.tag_name().name() == "ph"
-            && node.tag_name().namespace() == Some(P_NAMESPACE)
-            && node.attribute("type") == Some("body")
+    Ok(if comments.is_empty() {
+        legacy
+    } else {
+        comments
     })
 }
 
-/// Parses raw slide XML and resolves missing placeholder positions from inherited sources.
 pub fn parse_slide_xml_with_inherited_positions(
     xml_data: &[u8],
     inherited_positions: &InheritedPositions,
@@ -230,694 +314,1291 @@ pub fn parse_slide_xml_with_inherited_positions(
     parse_slide_xml_with_hyperlinks(xml_data, inherited_positions, &HashMap::new())
 }
 
-/// Parses slide XML while resolving text-run hyperlink relationship IDs.
 pub fn parse_slide_xml_with_hyperlinks(
     xml_data: &[u8],
     inherited_positions: &InheritedPositions,
     hyperlinks: &HashMap<String, String>,
 ) -> Result<Vec<SlideElement>> {
-    let xml_str = std::str::from_utf8(xml_data).map_err(|_| Error::Unknown)?;
-    let doc = Document::parse(xml_str)?;
-    let root = doc.root_element();
-    let ns = root.tag_name().namespace();
-
-    let c_sld = root
-        .descendants()
-        .find(|n| n.tag_name().name() == "cSld" && n.tag_name().namespace() == ns)
-        .ok_or(format!("No <p:cSld> tag was found for: {:?}", ns))
-        .map_err(|_| Error::Unknown)?;
-
-    let sp_tree = c_sld
-        .children()
-        .find(|n| n.tag_name().name() == "spTree" && n.tag_name().namespace() == ns)
-        .ok_or(format!("No <p:spTree> tag was found for: {:?}", ns))
-        .map_err(|_| Error::Unknown)?;
-
-    let mut elements = Vec::new();
-    for child_node in sp_tree.children().filter(|n| n.is_element()) {
-        elements.extend(parse_group(
-            &child_node,
-            CoordinateTransform::identity(),
-            inherited_positions,
-            hyperlinks,
-        )?);
+    let mut xml = reader(xml_data);
+    let mut in_common_slide = false;
+    loop {
+        match event(&mut xml, "PPTX slide")? {
+            Event::Start(element) if element_is(&xml, &element, P_NAMESPACE, b"cSld") => {
+                in_common_slide = true;
+            }
+            Event::Start(element)
+                if in_common_slide && element_is(&xml, &element, P_NAMESPACE, b"spTree") =>
+            {
+                return parse_shape_tree(
+                    &mut xml,
+                    CoordinateTransform::identity(),
+                    inherited_positions,
+                    hyperlinks,
+                    b"spTree",
+                );
+            }
+            Event::Empty(element)
+                if in_common_slide && element_is(&xml, &element, P_NAMESPACE, b"spTree") =>
+            {
+                return Ok(Vec::new());
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"cSld") => {
+                in_common_slide = false;
+            }
+            Event::Eof => return Err(Error::ParseError("PPTX slide shape tree not found")),
+            _ => {}
+        }
     }
+}
 
+pub(crate) fn parse_slide_document_with_hyperlinks(
+    xml_data: &[u8],
+    inherited_positions: &InheritedPositions,
+    hyperlinks: &HashMap<String, String>,
+) -> Result<ParsedSlideDocument> {
+    let mut xml = reader(xml_data);
+    let mut in_common_slide = false;
+    let mut source_order = 0usize;
+    loop {
+        match event(&mut xml, "PPTX slide")? {
+            Event::Start(element) if element_is(&xml, &element, P_NAMESPACE, b"cSld") => {
+                in_common_slide = true;
+            }
+            Event::Start(element)
+                if in_common_slide && element_is(&xml, &element, P_NAMESPACE, b"spTree") =>
+            {
+                return parse_semantic_shape_tree(
+                    &mut xml,
+                    CoordinateTransform::identity(),
+                    inherited_positions,
+                    hyperlinks,
+                    b"spTree",
+                    &mut source_order,
+                );
+            }
+            Event::Empty(element)
+                if in_common_slide && element_is(&xml, &element, P_NAMESPACE, b"spTree") =>
+            {
+                return Ok(ParsedSlideDocument {
+                    elements: Vec::new(),
+                    blocks: Vec::new(),
+                    diagnostics: Vec::new(),
+                });
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"cSld") => {
+                in_common_slide = false;
+            }
+            Event::Eof => return Err(Error::ParseError("PPTX slide shape tree not found")),
+            _ => {}
+        }
+    }
+}
+
+fn parse_semantic_shape_tree(
+    xml: &mut XmlReader<'_>,
+    transform: CoordinateTransform,
+    inherited: &InheritedPositions,
+    hyperlinks: &HashMap<String, String>,
+    end: &[u8],
+    source_order: &mut usize,
+) -> Result<ParsedSlideDocument> {
+    let mut parsed = ParsedSlideDocument {
+        elements: Vec::new(),
+        blocks: Vec::new(),
+        diagnostics: Vec::new(),
+    };
+    loop {
+        match event(xml, "PPTX slide")? {
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"sp") => {
+                let mut shape = parse_shape(xml, hyperlinks)?;
+                let position = shape.position.effective(transform, inherited);
+                let bounds = shape.position.effective_bounds(transform, inherited);
+                if let Some(mut content) = shape.content.take() {
+                    apply_inherited_list_styles(&mut content, &shape.position, inherited);
+                    content.role = placeholder_role(shape.position.placeholder.as_ref());
+                    parsed
+                        .elements
+                        .extend(content_to_elements(content.clone(), position));
+                    push_semantic_block(
+                        &mut parsed,
+                        source_order,
+                        bounds,
+                        SlideBlockContent::Text(content),
+                    );
+                } else {
+                    push_unsupported(&mut parsed, source_order, bounds, "shape", None);
+                }
+            }
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"graphicFrame") => {
+                let (table, position) = parse_graphic_frame(xml, hyperlinks)?;
+                let bounds = position.effective_bounds(transform, inherited);
+                if let Some(table) = table {
+                    parsed.elements.push(SlideElement::Table(
+                        table.clone(),
+                        position.effective(transform, inherited),
+                    ));
+                    push_semantic_block(
+                        &mut parsed,
+                        source_order,
+                        bounds,
+                        SlideBlockContent::Table(legacy_table_to_semantic(&table)),
+                    );
+                } else {
+                    let fallback_text = (!position.fallback_text.trim().is_empty())
+                        .then(|| position.fallback_text.trim().to_string());
+                    push_unsupported(
+                        &mut parsed,
+                        source_order,
+                        bounds,
+                        "graphicFrame",
+                        fallback_text,
+                    );
+                }
+            }
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"pic") => {
+                let (image, position, alt_text) = parse_picture(xml)?;
+                parsed.elements.push(SlideElement::Image(
+                    image.clone(),
+                    position.effective(transform, inherited),
+                ));
+                push_semantic_block(
+                    &mut parsed,
+                    source_order,
+                    position.effective_bounds(transform, inherited),
+                    SlideBlockContent::Image(ImageBlock {
+                        reference: image,
+                        alt_text,
+                        mime_type: None,
+                    }),
+                );
+            }
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"grpSp") => {
+                merge_parsed(
+                    &mut parsed,
+                    parse_semantic_group(xml, transform, inherited, hyperlinks, source_order)?,
+                );
+            }
+            Event::Start(element) => {
+                let local_name = crate::xml::local(element.name().as_ref()).to_vec();
+                let is_presentation = {
+                    let (namespace, _) = xml.resolver().resolve_element(element.name());
+                    matches!(namespace, quick_xml::name::ResolveResult::Bound(value) if value.as_ref() == P_NAMESPACE.as_bytes())
+                };
+                let element_end = element.name().as_ref().to_vec();
+                skip_element(xml, &element_end, "PPTX slide")?;
+                if is_presentation && !matches!(local_name.as_slice(), b"nvGrpSpPr" | b"grpSpPr") {
+                    push_unsupported(
+                        &mut parsed,
+                        source_order,
+                        Bounds::default(),
+                        &String::from_utf8_lossy(&local_name),
+                        None,
+                    );
+                }
+            }
+            Event::End(element) if end_is(element.name().as_ref(), end) => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of PPTX shape tree")),
+            _ => {}
+        }
+    }
+    Ok(parsed)
+}
+
+fn parse_semantic_group(
+    xml: &mut XmlReader<'_>,
+    parent: CoordinateTransform,
+    inherited: &InheritedPositions,
+    hyperlinks: &HashMap<String, String>,
+    source_order: &mut usize,
+) -> Result<ParsedSlideDocument> {
+    let mut parsed = ParsedSlideDocument {
+        elements: Vec::new(),
+        blocks: Vec::new(),
+        diagnostics: Vec::new(),
+    };
+    let mut transform = GroupTransformData::default();
+    loop {
+        match event(xml, "PPTX group")? {
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"grpSpPr") => {
+                parse_group_properties(xml, &mut transform)?;
+            }
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"sp") => {
+                let combined = parent.then(transform.finish());
+                let mut shape = parse_shape(xml, hyperlinks)?;
+                let position = shape.position.effective(combined, inherited);
+                let bounds = shape.position.effective_bounds(combined, inherited);
+                if let Some(mut content) = shape.content.take() {
+                    apply_inherited_list_styles(&mut content, &shape.position, inherited);
+                    content.role = placeholder_role(shape.position.placeholder.as_ref());
+                    parsed
+                        .elements
+                        .extend(content_to_elements(content.clone(), position));
+                    push_semantic_block(
+                        &mut parsed,
+                        source_order,
+                        bounds,
+                        SlideBlockContent::Text(content),
+                    );
+                } else {
+                    push_unsupported(&mut parsed, source_order, bounds, "shape", None);
+                }
+            }
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"graphicFrame") => {
+                let combined = parent.then(transform.finish());
+                let (table, position) = parse_graphic_frame(xml, hyperlinks)?;
+                let bounds = position.effective_bounds(combined, inherited);
+                if let Some(table) = table {
+                    parsed.elements.push(SlideElement::Table(
+                        table.clone(),
+                        position.effective(combined, inherited),
+                    ));
+                    push_semantic_block(
+                        &mut parsed,
+                        source_order,
+                        bounds,
+                        SlideBlockContent::Table(legacy_table_to_semantic(&table)),
+                    );
+                } else {
+                    let fallback_text = (!position.fallback_text.trim().is_empty())
+                        .then(|| position.fallback_text.trim().to_string());
+                    push_unsupported(
+                        &mut parsed,
+                        source_order,
+                        bounds,
+                        "graphicFrame",
+                        fallback_text,
+                    );
+                }
+            }
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"pic") => {
+                let combined = parent.then(transform.finish());
+                let (image, position, alt_text) = parse_picture(xml)?;
+                parsed.elements.push(SlideElement::Image(
+                    image.clone(),
+                    position.effective(combined, inherited),
+                ));
+                push_semantic_block(
+                    &mut parsed,
+                    source_order,
+                    position.effective_bounds(combined, inherited),
+                    SlideBlockContent::Image(ImageBlock {
+                        reference: image,
+                        alt_text,
+                        mime_type: None,
+                    }),
+                );
+            }
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"grpSp") => {
+                merge_parsed(
+                    &mut parsed,
+                    parse_semantic_group(
+                        xml,
+                        parent.then(transform.finish()),
+                        inherited,
+                        hyperlinks,
+                        source_order,
+                    )?,
+                );
+            }
+            Event::Start(element) => {
+                let name = crate::xml::local(element.name().as_ref()).to_vec();
+                let end = element.name().as_ref().to_vec();
+                skip_element(xml, &end, "PPTX group")?;
+                if !matches!(name.as_slice(), b"nvGrpSpPr") {
+                    push_unsupported(
+                        &mut parsed,
+                        source_order,
+                        Bounds::default(),
+                        &String::from_utf8_lossy(&name),
+                        None,
+                    );
+                }
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"grpSp") => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of PPTX group")),
+            _ => {}
+        }
+    }
+    Ok(parsed)
+}
+
+fn merge_parsed(target: &mut ParsedSlideDocument, mut source: ParsedSlideDocument) {
+    target.elements.append(&mut source.elements);
+    target.blocks.append(&mut source.blocks);
+    target.diagnostics.append(&mut source.diagnostics);
+}
+
+fn push_semantic_block(
+    parsed: &mut ParsedSlideDocument,
+    source_order: &mut usize,
+    bounds: Bounds,
+    content: SlideBlockContent,
+) {
+    parsed.blocks.push(SlideBlock {
+        bounds,
+        source_order: *source_order,
+        content,
+    });
+    *source_order += 1;
+}
+
+fn push_unsupported(
+    parsed: &mut ParsedSlideDocument,
+    source_order: &mut usize,
+    bounds: Bounds,
+    kind: &str,
+    fallback_text: Option<String>,
+) {
+    parsed.elements.push(SlideElement::Unknown);
+    parsed.diagnostics.push(ParseDiagnostic {
+        severity: DiagnosticSeverity::Warning,
+        message: format!("Unsupported PPTX slide element: {kind}"),
+        source: None,
+    });
+    push_semantic_block(
+        parsed,
+        source_order,
+        bounds,
+        SlideBlockContent::Unsupported(UnsupportedBlock {
+            kind: kind.to_string(),
+            fallback_text,
+        }),
+    );
+}
+
+fn placeholder_role(placeholder: Option<&PlaceholderKey>) -> TextRole {
+    match placeholder.and_then(|placeholder| placeholder.kind.as_deref()) {
+        Some("title") | Some("ctrTitle") => TextRole::Title,
+        Some("subTitle") => TextRole::Subtitle,
+        Some("body") | Some("obj") => TextRole::Body,
+        Some("caption") => TextRole::Caption,
+        None if placeholder.is_some_and(|placeholder| placeholder.idx.is_some()) => TextRole::Body,
+        _ => TextRole::Other,
+    }
+}
+
+fn apply_inherited_list_styles(
+    content: &mut TextBlock,
+    position: &PositionData,
+    inherited: &InheritedPositions,
+) {
+    let Some(placeholder) = position.placeholder.as_ref() else {
+        return;
+    };
+    for paragraph in &mut content.paragraphs {
+        if paragraph.list_explicit {
+            continue;
+        }
+        let level = paragraph.list.as_ref().map(|list| list.level).unwrap_or(0);
+        if let Some(kind) = inherited.resolve_list_kind(placeholder, level) {
+            paragraph.list = Some(ListInfo { level, kind });
+        }
+    }
+}
+
+fn legacy_table_to_semantic(table: &TableElement) -> SemanticTable {
+    SemanticTable {
+        rows: table
+            .rows
+            .iter()
+            .map(|row| SemanticTableRow {
+                cells: row
+                    .cells
+                    .iter()
+                    .map(|cell| SemanticTableCell {
+                        paragraphs: if cell.paragraphs.is_empty() {
+                            vec![Paragraph::plain(cell.runs.clone())]
+                        } else {
+                            cell.paragraphs.clone()
+                        },
+                        row_span: cell.row_span.max(1),
+                        column_span: cell.column_span.max(1),
+                        covered: cell.covered,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
+fn parse_shape_tree(
+    xml: &mut XmlReader<'_>,
+    transform: CoordinateTransform,
+    inherited: &InheritedPositions,
+    hyperlinks: &HashMap<String, String>,
+    end: &[u8],
+) -> Result<Vec<SlideElement>> {
+    let mut elements = Vec::new();
+    loop {
+        match event(xml, "PPTX slide")? {
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"sp") => {
+                let mut shape = parse_shape(xml, hyperlinks)?;
+                let position = shape.position.effective(transform, inherited);
+                if let Some(content) = shape.content.as_mut() {
+                    apply_inherited_list_styles(content, &shape.position, inherited);
+                }
+                elements.extend(content_to_elements(
+                    shape
+                        .content
+                        .ok_or(Error::ParseError("PPTX shape has no text body"))?,
+                    position,
+                ));
+            }
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"graphicFrame") => {
+                let (table, position) = parse_graphic_frame(xml, hyperlinks)?;
+                if let Some(table) = table {
+                    elements.push(SlideElement::Table(
+                        table,
+                        position.effective(transform, inherited),
+                    ));
+                }
+            }
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"pic") => {
+                let (image, position, _) = parse_picture(xml)?;
+                elements.push(SlideElement::Image(
+                    image,
+                    position.effective(transform, inherited),
+                ));
+            }
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"grpSp") => {
+                elements.extend(parse_group(xml, transform, inherited, hyperlinks)?);
+            }
+            Event::Start(element) => {
+                let is_presentation = {
+                    let (namespace, _) = xml.resolver().resolve_element(element.name());
+                    matches!(namespace, quick_xml::name::ResolveResult::Bound(value) if value.as_ref() == P_NAMESPACE.as_bytes())
+                };
+                let element_end = element.name().as_ref().to_vec();
+                skip_element(xml, &element_end, "PPTX slide")?;
+                if is_presentation {
+                    elements.push(SlideElement::Unknown);
+                }
+            }
+            Event::Empty(element) => {
+                let (namespace, _) = xml.resolver().resolve_element(element.name());
+                if matches!(namespace, quick_xml::name::ResolveResult::Bound(value) if value.as_ref() == P_NAMESPACE.as_bytes())
+                {
+                    elements.push(SlideElement::Unknown);
+                }
+            }
+            Event::End(element) if end_is(element.name().as_ref(), end) => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of PPTX shape tree")),
+            _ => {}
+        }
+    }
     Ok(elements)
 }
 
-/// Parses a slide node and all nested child nodes recursively.
-///
-/// The `transform` argument carries the accumulated group transformation so elements
-/// inside nested `<p:grpSp>` containers can be positioned in slide coordinates.
 fn parse_group(
-    node: &Node,
-    transform: CoordinateTransform,
-    inherited_positions: &InheritedPositions,
+    xml: &mut XmlReader<'_>,
+    parent: CoordinateTransform,
+    inherited: &InheritedPositions,
     hyperlinks: &HashMap<String, String>,
 ) -> Result<Vec<SlideElement>> {
     let mut elements = Vec::new();
-
-    let tag_name = node.tag_name().name();
-    let namespace = node.tag_name().namespace().unwrap_or("");
-
-    if namespace != P_NAMESPACE {
-        return Ok(elements);
-    }
-
-    let position = extract_position(node, transform, inherited_positions);
-
-    match tag_name {
-        "sp" => match parse_sp(node, hyperlinks)? {
-            ParsedContent::Text(text) => elements.push(SlideElement::Text(text, position)),
-            ParsedContent::List(list) => elements.push(SlideElement::List(list, position)),
-        },
-        "graphicFrame" => {
-            if let Some(graphic_element) = parse_graphic_frame_with_hyperlinks(node, hyperlinks)? {
-                elements.push(SlideElement::Table(graphic_element, position));
+    let mut transform = GroupTransformData::default();
+    loop {
+        match event(xml, "PPTX group")? {
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"grpSpPr") => {
+                parse_group_properties(xml, &mut transform)?;
+                elements.push(SlideElement::Unknown);
             }
-        }
-        "pic" => {
-            let image_reference = parse_pic(node)?;
-            elements.push(SlideElement::Image(image_reference, position));
-        }
-        "grpSp" => {
-            let child_transform = transform.then(extract_group_transform(node));
-            for child in node.children().filter(|n| n.is_element()) {
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"sp") => {
+                let combined = parent.then(transform.finish());
+                let mut shape = parse_shape(xml, hyperlinks)?;
+                let position = shape.position.effective(combined, inherited);
+                if let Some(content) = shape.content.as_mut() {
+                    apply_inherited_list_styles(content, &shape.position, inherited);
+                }
+                elements.extend(content_to_elements(
+                    shape
+                        .content
+                        .ok_or(Error::ParseError("PPTX shape has no text body"))?,
+                    position,
+                ));
+            }
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"graphicFrame") => {
+                let combined = parent.then(transform.finish());
+                let (table, position) = parse_graphic_frame(xml, hyperlinks)?;
+                if let Some(table) = table {
+                    elements.push(SlideElement::Table(
+                        table,
+                        position.effective(combined, inherited),
+                    ));
+                }
+            }
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"pic") => {
+                let combined = parent.then(transform.finish());
+                let (image, position, _) = parse_picture(xml)?;
+                elements.push(SlideElement::Image(
+                    image,
+                    position.effective(combined, inherited),
+                ));
+            }
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"grpSp") => {
                 elements.extend(parse_group(
-                    &child,
-                    child_transform,
-                    inherited_positions,
+                    xml,
+                    parent.then(transform.finish()),
+                    inherited,
                     hyperlinks,
                 )?);
             }
+            Event::Start(element) => {
+                let is_presentation = {
+                    let (namespace, _) = xml.resolver().resolve_element(element.name());
+                    matches!(namespace, quick_xml::name::ResolveResult::Bound(value) if value.as_ref() == P_NAMESPACE.as_bytes())
+                };
+                let end = element.name().as_ref().to_vec();
+                skip_element(xml, &end, "PPTX group")?;
+                if is_presentation {
+                    elements.push(SlideElement::Unknown);
+                }
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"grpSp") => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of PPTX group")),
+            _ => {}
         }
-        _ => elements.push(SlideElement::Unknown),
     }
-
     Ok(elements)
 }
 
-/// Parses the text body node (`<p:txBody>`) ito search for shape nodes (`<a:sp>`) and
-/// evaluates if a shape is a formatted list or a common text
-fn parse_sp(sp_node: &Node, hyperlinks: &HashMap<String, String>) -> Result<ParsedContent> {
-    let tx_body_node = sp_node
-        .children()
-        .find(|n| n.tag_name().name() == "txBody" && n.tag_name().namespace() == Some(P_NAMESPACE))
-        .ok_or(Error::Unknown)?;
-
-    let is_list = tx_body_node.descendants().any(|n| {
-        n.is_element()
-            && n.tag_name().name() == "pPr"
-            && n.tag_name().namespace() == Some(A_NAMESPACE)
-            && (n.attribute("lvl").is_some()
-                || n.children().any(|child| {
-                    child.is_element()
-                        && (child.tag_name().name() == "buAutoNum"
-                            || child.tag_name().name() == "buChar")
-                }))
-    });
-
-    if is_list {
-        Ok(ParsedContent::List(parse_list_with_hyperlinks(
-            &tx_body_node,
-            hyperlinks,
-        )?))
-    } else {
-        Ok(ParsedContent::Text(parse_text_with_hyperlinks(
-            &tx_body_node,
-            hyperlinks,
-        )?))
-    }
-}
-
-/// Parses the text body node (`<p:txBody>`) for all paragraph nodes (`<a:p>`) containing text runs
-/// # Returns
-/// Returns a `Result` containing either:
-/// - `SlideElement::Text`: A text element containing all text runs
-/// - `Error`: Error information encapsulated in [`crate::Error`] if parsing fails at XML parsing level.
-#[cfg(test)]
-fn parse_text(tx_body_node: &Node) -> Result<TextElement> {
-    parse_text_with_hyperlinks(tx_body_node, &HashMap::new())
-}
-
-fn parse_text_with_hyperlinks(
-    tx_body_node: &Node,
-    hyperlinks: &HashMap<String, String>,
-) -> Result<TextElement> {
-    let mut runs = Vec::new();
-
-    for p_node in tx_body_node.children().filter(|n| {
-        n.is_element()
-            && n.tag_name().name() == "p"
-            && n.tag_name().namespace() == Some(A_NAMESPACE)
-    }) {
-        let mut paragraph_runs = parse_paragraph_with_hyperlinks(&p_node, true, hyperlinks)?;
-        runs.append(&mut paragraph_runs);
-    }
-
-    Ok(TextElement { runs })
-}
-
-#[cfg(test)]
-fn parse_graphic_frame(node: &Node) -> Result<Option<TableElement>> {
-    parse_graphic_frame_with_hyperlinks(node, &HashMap::new())
-}
-
-fn parse_graphic_frame_with_hyperlinks(
-    node: &Node,
-    hyperlinks: &HashMap<String, String>,
-) -> Result<Option<TableElement>> {
-    let graphic_data_node = node.descendants().find(|n| {
-        n.is_element()
-            && n.tag_name().name() == "graphicData"
-            && n.tag_name().namespace() == Some(A_NAMESPACE)
-            && n.attribute("uri") == Some("http://schemas.openxmlformats.org/drawingml/2006/table")
-    });
-
-    if let Some(graphic_data) = graphic_data_node {
-        if let Some(tbl_node) = graphic_data.children().find(|n| {
-            n.is_element()
-                && n.tag_name().name() == "tbl"
-                && n.tag_name().namespace() == Some(A_NAMESPACE)
-        }) {
-            let table = parse_table_with_hyperlinks(&tbl_node, hyperlinks)?;
-            return Ok(Some(table));
+fn parse_shape(xml: &mut XmlReader<'_>, hyperlinks: &HashMap<String, String>) -> Result<ShapeData> {
+    let mut position = PositionData::default();
+    let mut content = None;
+    loop {
+        match event(xml, "PPTX shape")? {
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, A_NAMESPACE, b"off") =>
+            {
+                position.observe_off(&element);
+            }
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, A_NAMESPACE, b"ext") =>
+            {
+                position.observe_ext(&element);
+            }
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, P_NAMESPACE, b"ph") =>
+            {
+                position.observe_placeholder(&element);
+            }
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"txBody") => {
+                content = Some(parse_text_body(xml, true, hyperlinks)?);
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"sp") => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of PPTX shape")),
+            _ => {}
         }
     }
-
-    Ok(None)
+    Ok(ShapeData { content, position })
 }
 
-/// Parses a table node (`<a:tbl>`) and extracts all
-/// table rows ('<a:tr>') elements to construct a `TableElement`.
+#[derive(Default)]
+struct ParagraphData {
+    runs: Vec<Run>,
+    level: u32,
+    list: Option<ListKind>,
+    list_explicit: bool,
+    alignment: ParagraphAlignment,
+    default_formatting: Formatting,
+}
+
+fn parse_text_body(
+    xml: &mut XmlReader<'_>,
+    add_newline: bool,
+    hyperlinks: &HashMap<String, String>,
+) -> Result<ParsedContent> {
+    let mut paragraphs = Vec::new();
+    loop {
+        match event(xml, "DrawingML text body")? {
+            Event::Start(element) if element_is(xml, &element, A_NAMESPACE, b"p") => {
+                paragraphs.push(parse_paragraph_events(xml, add_newline, hyperlinks)?);
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"txBody") => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of DrawingML text body")),
+            _ => {}
+        }
+    }
+    Ok(TextBlock {
+        role: TextRole::Other,
+        paragraphs: paragraphs
+            .into_iter()
+            .map(|paragraph| Paragraph {
+                runs: paragraph.runs,
+                alignment: paragraph.alignment,
+                list: paragraph.list.map(|kind| ListInfo {
+                    level: paragraph.level,
+                    kind,
+                }),
+                list_explicit: paragraph.list_explicit,
+            })
+            .collect(),
+    })
+}
+
+fn parse_paragraph_events(
+    xml: &mut XmlReader<'_>,
+    add_newline: bool,
+    hyperlinks: &HashMap<String, String>,
+) -> Result<ParagraphData> {
+    let mut paragraph = ParagraphData::default();
+    loop {
+        match event(xml, "DrawingML paragraph")? {
+            Event::Start(element) if element_is(xml, &element, A_NAMESPACE, b"pPr") => {
+                parse_paragraph_properties(xml, &element, &mut paragraph)?;
+            }
+            Event::Empty(element) if element_is(xml, &element, A_NAMESPACE, b"pPr") => {
+                paragraph.level = attr(&element, b"lvl")
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(0);
+                if attr(&element, b"lvl").is_some() {
+                    paragraph.list = Some(ListKind::Bullet { character: None });
+                }
+                paragraph.alignment = paragraph_alignment(attr(&element, b"algn").as_deref());
+            }
+            Event::Start(element) if element_is(xml, &element, A_NAMESPACE, b"r") => {
+                paragraph.runs.push(parse_run_events_with_base(
+                    xml,
+                    hyperlinks,
+                    b"r",
+                    paragraph.default_formatting.clone(),
+                )?);
+            }
+            Event::Start(element) if element_is(xml, &element, A_NAMESPACE, b"fld") => {
+                paragraph.runs.push(parse_run_events_with_base(
+                    xml,
+                    hyperlinks,
+                    b"fld",
+                    paragraph.default_formatting.clone(),
+                )?);
+            }
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, A_NAMESPACE, b"br") =>
+            {
+                paragraph.runs.push(Run {
+                    text: "\n".to_string(),
+                    formatting: paragraph.default_formatting.clone(),
+                    link_target: None,
+                });
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"p") => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of DrawingML paragraph")),
+            _ => {}
+        }
+    }
+    if add_newline && let Some(last) = paragraph.runs.last_mut() {
+        last.text.push('\n');
+    }
+    Ok(paragraph)
+}
+
+fn parse_paragraph_properties(
+    xml: &mut XmlReader<'_>,
+    start: &BytesStart<'_>,
+    paragraph: &mut ParagraphData,
+) -> Result<()> {
+    paragraph.level = attr(start, b"lvl")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    if attr(start, b"lvl").is_some() {
+        paragraph.list = Some(ListKind::Bullet { character: None });
+    }
+    paragraph.alignment = paragraph_alignment(attr(start, b"algn").as_deref());
+    loop {
+        match event(xml, "DrawingML paragraph properties")? {
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, A_NAMESPACE, b"buAutoNum") =>
+            {
+                paragraph.list = Some(ListKind::Ordered {
+                    style: attr(&element, b"type"),
+                    start: attr(&element, b"startAt")
+                        .and_then(|value| value.parse().ok())
+                        .unwrap_or(1),
+                });
+                paragraph.list_explicit = true;
+            }
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, A_NAMESPACE, b"buChar") =>
+            {
+                paragraph.list = Some(ListKind::Bullet {
+                    character: attr(&element, b"char"),
+                });
+                paragraph.list_explicit = true;
+            }
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, A_NAMESPACE, b"buNone") =>
+            {
+                paragraph.list = None;
+                paragraph.list_explicit = true;
+            }
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, A_NAMESPACE, b"defRPr") =>
+            {
+                apply_run_attributes(&element, &mut paragraph.default_formatting);
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"pPr") => break,
+            Event::Eof => {
+                return Err(Error::ParseError(
+                    "Unexpected end of DrawingML paragraph properties",
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
-fn parse_table(tbl_node: &Node) -> Result<TableElement> {
-    parse_table_with_hyperlinks(tbl_node, &HashMap::new())
+fn parse_run_events(xml: &mut XmlReader<'_>, hyperlinks: &HashMap<String, String>) -> Result<Run> {
+    parse_run_events_with_base(xml, hyperlinks, b"r", Formatting::default())
 }
 
-fn parse_table_with_hyperlinks(
-    tbl_node: &Node,
+fn parse_run_events_with_base(
+    xml: &mut XmlReader<'_>,
+    hyperlinks: &HashMap<String, String>,
+    end: &[u8],
+    mut formatting: Formatting,
+) -> Result<Run> {
+    let mut value = String::new();
+    let mut link_id = None;
+    loop {
+        match event(xml, "DrawingML run")? {
+            Event::Start(element) if element_is(xml, &element, A_NAMESPACE, b"rPr") => {
+                apply_run_attributes(&element, &mut formatting);
+                link_id = parse_run_properties(xml, link_id)?;
+            }
+            Event::Empty(element) if element_is(xml, &element, A_NAMESPACE, b"rPr") => {
+                apply_run_attributes(&element, &mut formatting);
+            }
+            Event::Start(element) if element_is(xml, &element, A_NAMESPACE, b"t") => {
+                value.push_str(&read_simple_text(xml, b"t", "DrawingML run")?);
+            }
+            Event::End(element) if end_is(element.name().as_ref(), end) => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of DrawingML run")),
+            _ => {}
+        }
+    }
+    Ok(Run {
+        text: value,
+        formatting,
+        link_target: link_id.and_then(|id| hyperlinks.get(&id).cloned()),
+    })
+}
+
+fn apply_run_attributes(element: &BytesStart<'_>, formatting: &mut Formatting) {
+    if let Some(value) = attr(element, b"b") {
+        formatting.bold = value == "1" || value.eq_ignore_ascii_case("true");
+    }
+    if let Some(value) = attr(element, b"i") {
+        formatting.italic = value == "1" || value.eq_ignore_ascii_case("true");
+    }
+    if let Some(value) = attr(element, b"u") {
+        formatting.underlined = value != "none";
+    }
+    if let Some(value) = attr(element, b"strike") {
+        formatting.strikethrough = value != "noStrike" && value != "0" && value != "false";
+    }
+    if let Some(value) = attr(element, b"baseline").and_then(|value| value.parse::<i32>().ok()) {
+        formatting.baseline = if value > 0 {
+            crate::Baseline::Superscript
+        } else if value < 0 {
+            crate::Baseline::Subscript
+        } else {
+            crate::Baseline::Normal
+        };
+    }
+    if let Some(value) = attr(element, b"sz").and_then(|value| value.parse::<f32>().ok()) {
+        formatting.font_size_points = Some(value / 100.0);
+    }
+    if let Some(value) = attr(element, b"lang") {
+        formatting.lang = value;
+    }
+}
+
+fn parse_run_properties(
+    xml: &mut XmlReader<'_>,
+    mut link_id: Option<String>,
+) -> Result<Option<String>> {
+    loop {
+        match event(xml, "DrawingML run properties")? {
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, A_NAMESPACE, b"hlinkClick") =>
+            {
+                link_id = attr(&element, b"id");
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"rPr") => break,
+            Event::Eof => {
+                return Err(Error::ParseError(
+                    "Unexpected end of DrawingML run properties",
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(link_id)
+}
+
+fn parse_graphic_frame(
+    xml: &mut XmlReader<'_>,
+    hyperlinks: &HashMap<String, String>,
+) -> Result<(Option<TableElement>, PositionData)> {
+    let mut position = PositionData::default();
+    let mut in_table_data = false;
+    let mut table = None;
+    loop {
+        match event(xml, "PPTX graphic frame")? {
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, A_NAMESPACE, b"off") =>
+            {
+                position.observe_off(&element);
+            }
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, A_NAMESPACE, b"ext") =>
+            {
+                position.observe_ext(&element);
+            }
+            Event::Start(element) if element_is(xml, &element, A_NAMESPACE, b"graphicData") => {
+                in_table_data = attr(&element, b"uri").as_deref()
+                    == Some("http://schemas.openxmlformats.org/drawingml/2006/table");
+            }
+            Event::Start(element)
+                if !in_table_data && element_is(xml, &element, A_NAMESPACE, b"t") =>
+            {
+                let value = read_simple_text(xml, b"t", "PPTX graphic frame")?;
+                if !value.is_empty() {
+                    if !position.fallback_text.is_empty() {
+                        position.fallback_text.push(' ');
+                    }
+                    position.fallback_text.push_str(&value);
+                }
+            }
+            Event::Start(element)
+                if in_table_data && element_is(xml, &element, A_NAMESPACE, b"tbl") =>
+            {
+                table = Some(parse_table_events(xml, hyperlinks)?);
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"graphicData") => {
+                in_table_data = false;
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"graphicFrame") => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of PPTX graphic frame")),
+            _ => {}
+        }
+    }
+    Ok((table, position))
+}
+
+fn parse_table_events(
+    xml: &mut XmlReader<'_>,
     hyperlinks: &HashMap<String, String>,
 ) -> Result<TableElement> {
     let mut rows = Vec::new();
-
-    for tr_node in tbl_node.children().filter(|n| {
-        n.is_element()
-            && n.tag_name().name() == "tr"
-            && n.tag_name().namespace() == Some(A_NAMESPACE)
-    }) {
-        let row = parse_table_row_with_hyperlinks(&tr_node, hyperlinks)?;
-        rows.push(row);
+    loop {
+        match event(xml, "DrawingML table")? {
+            Event::Start(element) if element_is(xml, &element, A_NAMESPACE, b"tr") => {
+                rows.push(parse_table_row_events(xml, hyperlinks)?);
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"tbl") => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of DrawingML table")),
+            _ => {}
+        }
     }
-
     Ok(TableElement { rows })
 }
 
-/// Parses a table row node (`'<a:tr>'`) and extracts all
-/// table cells ('<a:tc>') elements to construct a full `TableRow`.
-#[cfg(test)]
-fn parse_table_row(tr_node: &Node) -> Result<TableRow> {
-    parse_table_row_with_hyperlinks(tr_node, &HashMap::new())
-}
-
-fn parse_table_row_with_hyperlinks(
-    tr_node: &Node,
+fn parse_table_row_events(
+    xml: &mut XmlReader<'_>,
     hyperlinks: &HashMap<String, String>,
 ) -> Result<TableRow> {
     let mut cells = Vec::new();
-
-    for tc_node in tr_node.children().filter(|n| {
-        n.is_element()
-            && n.tag_name().name() == "tc"
-            && n.tag_name().namespace() == Some(A_NAMESPACE)
-    }) {
-        let cell = parse_table_cell_with_hyperlinks(&tc_node, hyperlinks)?;
-        cells.push(cell);
+    loop {
+        match event(xml, "DrawingML table row")? {
+            Event::Start(element) if element_is(xml, &element, A_NAMESPACE, b"tc") => {
+                cells.push(parse_table_cell_events(xml, &element, hyperlinks)?);
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"tr") => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of DrawingML table row")),
+            _ => {}
+        }
     }
-
     Ok(TableRow { cells })
 }
 
-/// Parses a table cell node (`'<a:tc>'`) and extracts all
-/// paragraph nodes ('<a:p>') to construct a `TableCell`.
-#[cfg(test)]
-fn parse_table_cell(tc_node: &Node) -> Result<TableCell> {
-    parse_table_cell_with_hyperlinks(tc_node, &HashMap::new())
-}
-
-fn parse_table_cell_with_hyperlinks(
-    tc_node: &Node,
+fn parse_table_cell_events(
+    xml: &mut XmlReader<'_>,
+    start: &BytesStart<'_>,
     hyperlinks: &HashMap<String, String>,
 ) -> Result<TableCell> {
     let mut runs = Vec::new();
-
-    if let Some(tx_body_node) = tc_node.children().find(|n| {
-        n.is_element()
-            && n.tag_name().name() == "txBody"
-            && n.tag_name().namespace() == Some(A_NAMESPACE)
-    }) {
-        for p_node in tx_body_node.children().filter(|n| {
-            n.is_element()
-                && n.tag_name().name() == "p"
-                && n.tag_name().namespace() == Some(A_NAMESPACE)
-        }) {
-            let mut paragraph_runs = parse_paragraph_with_hyperlinks(&p_node, false, hyperlinks)?;
-            runs.append(&mut paragraph_runs);
+    let mut paragraphs = Vec::new();
+    loop {
+        match event(xml, "DrawingML table cell")? {
+            Event::Start(element) if element_is(xml, &element, A_NAMESPACE, b"txBody") => {
+                let content = parse_text_body(xml, false, hyperlinks)?;
+                paragraphs = content.paragraphs.clone();
+                runs = content_to_text(content).runs;
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"tc") => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of DrawingML table cell")),
+            _ => {}
         }
     }
-
-    Ok(TableCell { runs })
-}
-
-/// Parses an image node (`<a:pic>`) to extract an image reference.
-///
-/// This function locates and processes the `<a:blip>` element inside a given
-/// image node, extracting the necessary attributes to build an `ImageReference` object
-/// that is necessary to link the image and extracts the relative image path from the media dir
-///
-/// # Returns
-///
-/// Returns a `Result` with:
-/// - `SlideElement::Image`: A `SlideElement` containing the image's reference `ID` to link it if successfully parsed.
-/// - `Error::ImageNotFound`: If the `<blip>` element or necessary attributes are missing.
-fn parse_pic(pic_node: &Node) -> Result<ImageReference> {
-    let blip_node = pic_node
-        .descendants()
-        .find(|n| {
-            n.is_element()
-                && n.tag_name().name() == "blip"
-                && n.tag_name().namespace() == Some(A_NAMESPACE)
-        })
-        .ok_or(Error::ImageNotFound)?;
-
-    let embed_attr = blip_node
-        .attribute((RELS_NAMESPACE, "embed"))
-        .or_else(|| blip_node.attribute("r:embed"))
-        .ok_or(Error::ImageNotFound)?;
-
-    let image_ref = ImageReference {
-        id: embed_attr.to_string(),
-        target: String::new(),
-    };
-
-    Ok(image_ref)
-}
-
-/// Parses the paragraph node (`<a:p>`) that is already identified as a list from the text body node (`<p:txBody>`)
-/// and extracts the _text runs_, the _level of indentation_ and weather its _ordered_ or _unordered_
-///
-/// # Returns
-/// - `SlideElement::List`: A complete lists with all children of type `ListElement`
-/// - `Error`: Error information encapsulated in [`crate::Error`] if parsing fails at XML parsing level.
-#[cfg(test)]
-fn parse_list(tx_body_node: &Node) -> Result<ListElement> {
-    parse_list_with_hyperlinks(tx_body_node, &HashMap::new())
-}
-
-fn parse_list_with_hyperlinks(
-    tx_body_node: &Node,
-    hyperlinks: &HashMap<String, String>,
-) -> Result<ListElement> {
-    let mut items = Vec::new();
-
-    for p_node in tx_body_node.children().filter(|n| {
-        n.is_element()
-            && n.tag_name().name() == "p"
-            && n.tag_name().namespace() == Some(A_NAMESPACE)
-    }) {
-        let (level, is_ordered) = parse_list_properties(&p_node)?;
-
-        let runs = parse_paragraph_with_hyperlinks(&p_node, true, hyperlinks)?;
-
-        items.push(ListItem {
-            level,
-            is_ordered,
-            runs,
-        });
-    }
-
-    Ok(ListElement { items })
-}
-
-/// Extracts list properties from a paragraph node (``<a:p>`).
-///
-/// This function analyzes a paragraph node to determine its list level and
-/// whether it's an ordered or unordered list in a PowerPoint slide's XML structure.
-///
-/// # Returns
-///
-/// Returns a `Result` containing:
-/// - `Ok((level, is_ordered))`: A tuple where `level` (u32) indicates the list depth level and `is_ordered` (bool) indicates if the list is ordered or unordered.
-/// - `Err(Error)`: When parsing fails due to structural inconsistencies in the XML node.
-fn parse_list_properties(p_node: &Node) -> Result<(u32, bool)> {
-    let mut level = 0;
-    let mut is_ordered = false;
-
-    if let Some(p_pr_node) = p_node.children().find(|n| {
-        n.is_element()
-            && n.tag_name().name() == "pPr"
-            && n.tag_name().namespace() == Some(A_NAMESPACE)
-    }) {
-        if let Some(lvl_attr) = p_pr_node.attribute("lvl") {
-            level = lvl_attr.parse::<u32>().unwrap_or(0);
-        }
-
-        is_ordered = p_pr_node.children().any(|n| {
-            n.is_element()
-                && n.tag_name().namespace() == Some(A_NAMESPACE)
-                && n.tag_name().name() == "buAutoNum"
-        });
-
-        if !is_ordered {
-            is_ordered = p_pr_node.children().any(|n| {
-                n.is_element()
-                    && n.tag_name().namespace() == Some(A_NAMESPACE)
-                    && n.tag_name().name() == "buChar"
-            });
-        }
-    }
-
-    Ok((level, is_ordered))
-}
-
-/// Parses a single text paragraph node (`<a:p>`) into multiple text runs.
-///
-/// # Notes
-/// Searches for the last run and adds a newline character
-#[cfg(test)]
-fn parse_paragraph(p_node: &Node, add_new_line: bool) -> Result<Vec<Run>> {
-    parse_paragraph_with_hyperlinks(p_node, add_new_line, &HashMap::new())
-}
-
-fn parse_paragraph_with_hyperlinks(
-    p_node: &Node,
-    add_new_line: bool,
-    hyperlinks: &HashMap<String, String>,
-) -> Result<Vec<Run>> {
-    let run_nodes: Vec<_> = p_node
-        .children()
-        .filter(|n| {
-            n.is_element()
-                && n.tag_name().name() == "r"
-                && n.tag_name().namespace() == Some(A_NAMESPACE)
-        })
-        .collect();
-
-    let count = run_nodes.len();
-    let mut runs: Vec<Run> = Vec::new();
-
-    for (idx, r_node) in run_nodes.iter().enumerate() {
-        let mut run = parse_run_with_hyperlinks(r_node, hyperlinks)?;
-
-        if add_new_line && idx == count - 1 {
-            run.text.push('\n');
-        }
-
-        runs.push(run);
-    }
-    Ok(runs)
-}
-
-/// Parses a single run properties node (`<a:rPr>`) and extracting the text content from the text node (`<a:t>`)
-/// as well as the format including _bold_, _italic_, _underlined_ and the _language_
-#[cfg(test)]
-fn parse_run(r_node: &Node) -> Result<Run> {
-    parse_run_with_hyperlinks(r_node, &HashMap::new())
-}
-
-fn parse_run_with_hyperlinks(r_node: &Node, hyperlinks: &HashMap<String, String>) -> Result<Run> {
-    let mut text = String::new();
-    let mut formatting = Formatting::default();
-
-    if let Some(r_pr_node) = r_node.children().find(|n| {
-        n.is_element()
-            && n.tag_name().name() == "rPr"
-            && n.tag_name().namespace() == Some(A_NAMESPACE)
-    }) {
-        if let Some(b_attr) = r_pr_node.attribute("b") {
-            formatting.bold = b_attr == "1" || b_attr.eq_ignore_ascii_case("true");
-        }
-        if let Some(i_attr) = r_pr_node.attribute("i") {
-            formatting.italic = i_attr == "1" || i_attr.eq_ignore_ascii_case("true");
-        }
-        if let Some(u_attr) = r_pr_node.attribute("u") {
-            formatting.underlined = u_attr != "none";
-        }
-        if let Some(lang_attr) = r_pr_node.attribute("lang") {
-            formatting.lang = lang_attr.to_string();
-        }
-    }
-
-    if let Some(t_node) = r_node.children().find(|n| {
-        n.is_element()
-            && n.tag_name().name() == "t"
-            && n.tag_name().namespace() == Some(A_NAMESPACE)
-    }) {
-        if let Some(t) = t_node.text() {
-            text.push_str(t);
-        }
-    }
-    let link_target = r_node
-        .children()
-        .find(|n| {
-            n.is_element()
-                && n.tag_name().name() == "rPr"
-                && n.tag_name().namespace() == Some(A_NAMESPACE)
-        })
-        .and_then(|r_pr| {
-            r_pr.children().find(|n| {
-                n.is_element()
-                    && n.tag_name().name() == "hlinkClick"
-                    && n.tag_name().namespace() == Some(A_NAMESPACE)
-            })
-        })
-        .and_then(|link| {
-            link.attribute((RELS_NAMESPACE, "id"))
-                .or_else(|| link.attribute("r:id"))
-        })
-        .and_then(|id| hyperlinks.get(id))
-        .cloned();
-
-    Ok(Run {
-        text,
-        formatting,
-        link_target,
+    Ok(TableCell {
+        runs,
+        paragraphs,
+        row_span: attr(start, b"rowSpan")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(1),
+        column_span: attr(start, b"gridSpan")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(1),
+        covered: attr(start, b"hMerge").as_deref() == Some("1")
+            || attr(start, b"vMerge").as_deref() == Some("1"),
     })
 }
 
-/// Extracts the effective slide position for a node.
-///
-/// The node's local coordinates are read from its transform XML and then converted
-/// through the accumulated parent-group transform.
-fn extract_position(
-    node: &Node,
-    transform: CoordinateTransform,
-    inherited_positions: &InheritedPositions,
-) -> ElementPosition {
-    extract_raw_position(node)
-        .map(|position| transform.apply(position))
-        .or_else(|| extract_placeholder_key(node).and_then(|key| inherited_positions.resolve(&key)))
-        .unwrap_or_default()
-}
-
-/// Reads a node's local position directly from its XML transform element.
-///
-/// Different PPTX element types store their transform in different places:
-/// shapes and pictures use `<a:xfrm>` inside `<p:spPr>`, while tables inside
-/// `<p:graphicFrame>` use `<p:xfrm>`.
-fn extract_raw_position(node: &Node) -> Option<ElementPosition> {
-    let xfrm = match node.tag_name().name() {
-        "sp" | "pic" => node
-            .children()
-            .find(|n| {
-                n.is_element()
-                    && n.tag_name().name() == "spPr"
-                    && n.tag_name().namespace() == Some(P_NAMESPACE)
-            })
-            .and_then(|sp_pr| {
-                sp_pr.children().find(|n| {
-                    n.is_element()
-                        && n.tag_name().name() == "xfrm"
-                        && n.tag_name().namespace() == Some(A_NAMESPACE)
-                })
-            }),
-        "graphicFrame" => node.children().find(|n| {
-            n.is_element()
-                && n.tag_name().name() == "xfrm"
-                && n.tag_name().namespace() == Some(P_NAMESPACE)
-        }),
-        "grpSp" => node
-            .children()
-            .find(|n| {
-                n.is_element()
-                    && n.tag_name().name() == "grpSpPr"
-                    && n.tag_name().namespace() == Some(P_NAMESPACE)
-            })
-            .and_then(|grp_sp_pr| {
-                grp_sp_pr.children().find(|n| {
-                    n.is_element()
-                        && n.tag_name().name() == "xfrm"
-                        && n.tag_name().namespace() == Some(A_NAMESPACE)
-                })
-            }),
-        _ => None,
-    }?;
-
-    Some(ElementPosition {
-        x: extract_child_attr_i64(&xfrm, A_NAMESPACE, "off", "x")?,
-        y: extract_child_attr_i64(&xfrm, A_NAMESPACE, "off", "y")?,
-    })
-}
-
-/// Builds the transformation that maps a group's local child coordinates
-/// into the coordinate system of its parent.
-///
-/// PowerPoint groups define both a child origin/extent (`chOff`/`chExt`) and a
-/// rendered origin/extent (`off`/`ext`). The resulting transform combines scaling
-/// and translation so all nested elements can be reported in slide space.
-fn extract_group_transform(node: &Node) -> CoordinateTransform {
-    let Some(xfrm) = node
-        .children()
-        .find(|n| {
-            n.is_element()
-                && n.tag_name().name() == "grpSpPr"
-                && n.tag_name().namespace() == Some(P_NAMESPACE)
-        })
-        .and_then(|grp_sp_pr| {
-            grp_sp_pr.children().find(|n| {
-                n.is_element()
-                    && n.tag_name().name() == "xfrm"
-                    && n.tag_name().namespace() == Some(A_NAMESPACE)
-            })
-        })
-    else {
-        return CoordinateTransform::identity();
-    };
-
-    let off_x = extract_child_attr_i64(&xfrm, A_NAMESPACE, "off", "x").unwrap_or(0) as f64;
-    let off_y = extract_child_attr_i64(&xfrm, A_NAMESPACE, "off", "y").unwrap_or(0) as f64;
-    let ch_off_x = extract_child_attr_i64(&xfrm, A_NAMESPACE, "chOff", "x").unwrap_or(0) as f64;
-    let ch_off_y = extract_child_attr_i64(&xfrm, A_NAMESPACE, "chOff", "y").unwrap_or(0) as f64;
-    let ext_x = extract_child_attr_i64(&xfrm, A_NAMESPACE, "ext", "cx").unwrap_or(0) as f64;
-    let ext_y = extract_child_attr_i64(&xfrm, A_NAMESPACE, "ext", "cy").unwrap_or(0) as f64;
-    let ch_ext_x = extract_child_attr_i64(&xfrm, A_NAMESPACE, "chExt", "cx").unwrap_or(0) as f64;
-    let ch_ext_y = extract_child_attr_i64(&xfrm, A_NAMESPACE, "chExt", "cy").unwrap_or(0) as f64;
-
-    let scale_x = if ch_ext_x == 0.0 {
-        1.0
-    } else {
-        ext_x / ch_ext_x
-    };
-    let scale_y = if ch_ext_y == 0.0 {
-        1.0
-    } else {
-        ext_y / ch_ext_y
-    };
-
-    CoordinateTransform {
-        scale_x,
-        scale_y,
-        translate_x: off_x - ch_off_x * scale_x,
-        translate_y: off_y - ch_off_y * scale_y,
+fn content_to_text(content: ParsedContent) -> TextElement {
+    TextElement {
+        runs: content
+            .paragraphs
+            .into_iter()
+            .flat_map(|paragraph| paragraph.runs)
+            .collect(),
     }
 }
 
-/// Reads an integer attribute from a direct child node with the given namespace and tag name.
-fn extract_child_attr_i64(
-    node: &Node,
-    namespace: &str,
-    child_name: &str,
-    attr_name: &str,
-) -> Option<i64> {
-    node.children()
-        .find(|n| {
-            n.is_element()
-                && n.tag_name().name() == child_name
-                && n.tag_name().namespace() == Some(namespace)
+fn content_to_elements(content: ParsedContent, position: ElementPosition) -> Vec<SlideElement> {
+    let all_text = content
+        .paragraphs
+        .iter()
+        .all(|paragraph| paragraph.list.is_none());
+    let all_list = content
+        .paragraphs
+        .iter()
+        .all(|paragraph| paragraph.list.is_some());
+    if all_text {
+        return vec![SlideElement::Text(content_to_text(content), position)];
+    }
+    if all_list {
+        return vec![SlideElement::List(
+            ListElement {
+                items: content
+                    .paragraphs
+                    .into_iter()
+                    .map(paragraph_to_list_item)
+                    .collect(),
+            },
+            position,
+        )];
+    }
+    content
+        .paragraphs
+        .into_iter()
+        .map(|paragraph| {
+            if paragraph.list.is_some() {
+                SlideElement::List(
+                    ListElement {
+                        items: vec![paragraph_to_list_item(paragraph)],
+                    },
+                    position,
+                )
+            } else {
+                SlideElement::Text(
+                    TextElement {
+                        runs: paragraph.runs,
+                    },
+                    position,
+                )
+            }
         })
-        .and_then(|child| child.attribute(attr_name))
-        .and_then(|value| value.parse::<i64>().ok())
+        .collect()
 }
 
-fn extract_placeholder_key(node: &Node) -> Option<PlaceholderKey> {
-    let placeholder = node.descendants().find(|n| {
-        n.is_element()
-            && n.tag_name().name() == "ph"
-            && n.tag_name().namespace() == Some(P_NAMESPACE)
-    })?;
-
-    Some(PlaceholderKey {
-        kind: placeholder.attribute("type").map(|value| value.to_string()),
-        idx: placeholder.attribute("idx").map(|value| value.to_string()),
-    })
+fn paragraph_to_list_item(paragraph: Paragraph) -> ListItem {
+    let list = paragraph.list.expect("list paragraph");
+    ListItem {
+        level: list.level,
+        is_ordered: matches!(list.kind, ListKind::Ordered { .. }),
+        runs: paragraph.runs,
+    }
 }
 
-/// Extracts placeholder positions from a layout or master XML document.
-///
-/// Placeholder nodes that do not define their own transform inherit their
-/// position from the provided `inherited_positions`.
+fn paragraph_alignment(value: Option<&str>) -> ParagraphAlignment {
+    match value {
+        Some("ctr") | Some("center") => ParagraphAlignment::Center,
+        Some("r") | Some("right") => ParagraphAlignment::End,
+        Some("just") | Some("dist") => ParagraphAlignment::Justify,
+        _ => ParagraphAlignment::Start,
+    }
+}
+
+fn parse_picture(
+    xml: &mut XmlReader<'_>,
+) -> Result<(ImageReference, PositionData, Option<String>)> {
+    let mut position = PositionData::default();
+    let mut image_id = None;
+    let mut alt_text = None;
+    loop {
+        match event(xml, "PPTX picture")? {
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, A_NAMESPACE, b"off") =>
+            {
+                position.observe_off(&element);
+            }
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, A_NAMESPACE, b"ext") =>
+            {
+                position.observe_ext(&element);
+            }
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, A_NAMESPACE, b"blip") =>
+            {
+                image_id = attr(&element, b"embed");
+            }
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, P_NAMESPACE, b"cNvPr") =>
+            {
+                alt_text = attr(&element, b"descr")
+                    .or_else(|| attr(&element, b"title"))
+                    .or_else(|| attr(&element, b"name"));
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"pic") => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of PPTX picture")),
+            _ => {}
+        }
+    }
+    Ok((
+        ImageReference {
+            id: image_id.ok_or(Error::ImageNotFound)?,
+            target: String::new(),
+        },
+        position,
+        alt_text,
+    ))
+}
+
+#[derive(Default)]
+struct GroupTransformData {
+    off_x: i64,
+    off_y: i64,
+    child_off_x: i64,
+    child_off_y: i64,
+    extent_x: i64,
+    extent_y: i64,
+    child_extent_x: i64,
+    child_extent_y: i64,
+}
+
+impl GroupTransformData {
+    fn finish(&self) -> CoordinateTransform {
+        let scale_x = if self.child_extent_x == 0 {
+            1.0
+        } else {
+            self.extent_x as f64 / self.child_extent_x as f64
+        };
+        let scale_y = if self.child_extent_y == 0 {
+            1.0
+        } else {
+            self.extent_y as f64 / self.child_extent_y as f64
+        };
+        CoordinateTransform {
+            scale_x,
+            scale_y,
+            translate_x: self.off_x as f64 - self.child_off_x as f64 * scale_x,
+            translate_y: self.off_y as f64 - self.child_off_y as f64 * scale_y,
+        }
+    }
+}
+
+fn parse_group_properties(xml: &mut XmlReader<'_>, data: &mut GroupTransformData) -> Result<()> {
+    loop {
+        match event(xml, "PPTX group properties")? {
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, A_NAMESPACE, b"off") =>
+            {
+                data.off_x = integer_attr(&element, b"x");
+                data.off_y = integer_attr(&element, b"y");
+            }
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, A_NAMESPACE, b"chOff") =>
+            {
+                data.child_off_x = integer_attr(&element, b"x");
+                data.child_off_y = integer_attr(&element, b"y");
+            }
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, A_NAMESPACE, b"ext") =>
+            {
+                data.extent_x = integer_attr(&element, b"cx");
+                data.extent_y = integer_attr(&element, b"cy");
+            }
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, A_NAMESPACE, b"chExt") =>
+            {
+                data.child_extent_x = integer_attr(&element, b"cx");
+                data.child_extent_y = integer_attr(&element, b"cy");
+            }
+            Event::End(element) if end_is(element.name().as_ref(), b"grpSpPr") => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of PPTX group properties")),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn integer_attr(element: &BytesStart<'_>, name: &[u8]) -> i64 {
+    attr(element, name)
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0)
+}
+
+fn read_simple_text(xml: &mut XmlReader<'_>, end: &[u8], part: &str) -> Result<String> {
+    let mut value = String::new();
+    loop {
+        match event(xml, part)? {
+            Event::Text(content) => value.push_str(&text(&content, part)?),
+            Event::GeneralRef(content) => value.push_str(&reference(&content, part)?),
+            Event::CData(content) => value.push_str(&String::from_utf8_lossy(content.as_ref())),
+            Event::End(element) if end_is(element.name().as_ref(), end) => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of XML text")),
+            _ => {}
+        }
+    }
+    Ok(value)
+}
+
 pub fn extract_inherited_positions(
     xml_data: &[u8],
     inherited_positions: &InheritedPositions,
 ) -> Result<InheritedPositions> {
-    let xml_str = std::str::from_utf8(xml_data).map_err(|_| Error::Unknown)?;
-    let doc = Document::parse(xml_str)?;
-    let root = doc.root_element();
-
-    let c_sld = root
-        .descendants()
-        .find(|n| {
-            n.tag_name().name() == "cSld" && n.tag_name().namespace() == root.tag_name().namespace()
-        })
-        .ok_or(Error::Unknown)?;
-
-    let sp_tree = c_sld
-        .children()
-        .find(|n| {
-            n.tag_name().name() == "spTree"
-                && n.tag_name().namespace() == root.tag_name().namespace()
-        })
-        .ok_or(Error::Unknown)?;
-
-    let mut positions = inherited_positions.positions.clone();
-    collect_placeholder_positions(
-        &sp_tree,
-        CoordinateTransform::identity(),
-        inherited_positions,
-        &mut positions,
-    );
-
-    Ok(InheritedPositions { positions })
+    let mut xml = reader(xml_data);
+    let mut in_common_slide = false;
+    loop {
+        match event(&mut xml, "PPTX layout or master")? {
+            Event::Start(element) if element_is(&xml, &element, P_NAMESPACE, b"cSld") => {
+                in_common_slide = true;
+            }
+            Event::Start(element)
+                if in_common_slide && element_is(&xml, &element, P_NAMESPACE, b"spTree") =>
+            {
+                let mut positions = inherited_positions.positions.clone();
+                let mut list_styles = inherited_positions.list_styles.clone();
+                collect_placeholder_positions(
+                    &mut xml,
+                    b"spTree",
+                    CoordinateTransform::identity(),
+                    inherited_positions,
+                    &mut positions,
+                    &mut list_styles,
+                )?;
+                return Ok(InheritedPositions {
+                    positions,
+                    list_styles,
+                });
+            }
+            Event::Empty(element)
+                if in_common_slide && element_is(&xml, &element, P_NAMESPACE, b"spTree") =>
+            {
+                return Ok(inherited_positions.clone());
+            }
+            Event::Eof => return Err(Error::ParseError("PPTX placeholder shape tree not found")),
+            _ => {}
+        }
+    }
 }
 
 fn collect_placeholder_positions(
-    node: &Node,
+    xml: &mut XmlReader<'_>,
+    end: &[u8],
     transform: CoordinateTransform,
-    inherited_positions: &InheritedPositions,
+    inherited: &InheritedPositions,
     positions: &mut HashMap<PlaceholderKey, ElementPosition>,
-) {
-    for child in node.children().filter(|n| n.is_element()) {
-        if child.tag_name().namespace() != Some(P_NAMESPACE) {
-            continue;
-        }
-
-        if child.tag_name().name() == "grpSp" {
-            let child_transform = transform.then(extract_group_transform(&child));
-            collect_placeholder_positions(&child, child_transform, inherited_positions, positions);
-            continue;
-        }
-
-        if let Some(key) = extract_placeholder_key(&child) {
-            let position = extract_raw_position(&child)
-                .map(|local| transform.apply(local))
-                .or_else(|| inherited_positions.resolve(&key));
-
-            if let Some(position) = position {
-                insert_placeholder_position(positions, key, position);
+    list_styles: &mut HashMap<PlaceholderKey, HashMap<u32, ListKind>>,
+) -> Result<()> {
+    let mut group_transform = GroupTransformData::default();
+    loop {
+        match event(xml, "PPTX placeholders")? {
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"grpSpPr") => {
+                parse_group_properties(xml, &mut group_transform)?;
             }
+            Event::Start(element) if element_is(xml, &element, P_NAMESPACE, b"grpSp") => {
+                collect_placeholder_positions(
+                    xml,
+                    b"grpSp",
+                    transform.then(group_transform.finish()),
+                    inherited,
+                    positions,
+                    list_styles,
+                )?;
+            }
+            Event::Start(element)
+                if element_is(xml, &element, P_NAMESPACE, b"sp")
+                    || element_is(xml, &element, P_NAMESPACE, b"pic")
+                    || element_is(xml, &element, P_NAMESPACE, b"graphicFrame") =>
+            {
+                let shape_end = crate::xml::local(element.name().as_ref()).to_vec();
+                let (data, styles) = scan_position(xml, &shape_end)?;
+                if let Some(key) = data.placeholder.as_ref()
+                    && let Some(position) = data
+                        .raw()
+                        .map(|position| transform.apply(position))
+                        .or_else(|| inherited.resolve(key))
+                {
+                    insert_placeholder_position(positions, key.clone(), position);
+                }
+                if let Some(key) = data.placeholder.as_ref()
+                    && !styles.is_empty()
+                {
+                    insert_placeholder_list_styles(list_styles, key.clone(), styles);
+                }
+            }
+            Event::End(element) if end_is(element.name().as_ref(), end) => break,
+            Event::Eof => return Err(Error::ParseError("Unexpected end of PPTX placeholders")),
+            _ => {}
         }
     }
+    Ok(())
+}
+
+fn scan_position(
+    xml: &mut XmlReader<'_>,
+    end: &[u8],
+) -> Result<(PositionData, HashMap<u32, ListKind>)> {
+    let mut data = PositionData::default();
+    let mut list_styles = HashMap::new();
+    loop {
+        match event(xml, "PPTX placeholder shape")? {
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, A_NAMESPACE, b"off") =>
+            {
+                data.observe_off(&element);
+            }
+            Event::Start(element) | Event::Empty(element)
+                if element_is(xml, &element, P_NAMESPACE, b"ph") =>
+            {
+                data.observe_placeholder(&element);
+            }
+            Event::Start(element) if element_is(xml, &element, A_NAMESPACE, b"pPr") => {
+                let mut paragraph = ParagraphData::default();
+                parse_paragraph_properties(xml, &element, &mut paragraph)?;
+                if let Some(kind) = paragraph.list {
+                    list_styles.insert(paragraph.level, kind);
+                }
+            }
+            Event::Empty(element) if element_is(xml, &element, A_NAMESPACE, b"pPr") => {
+                if let Some(level) = attr(&element, b"lvl").and_then(|value| value.parse().ok()) {
+                    list_styles.insert(level, ListKind::Bullet { character: None });
+                }
+            }
+            Event::End(element) if end_is(element.name().as_ref(), end) => break,
+            Event::Eof => {
+                return Err(Error::ParseError(
+                    "Unexpected end of PPTX placeholder shape",
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok((data, list_styles))
 }
 
 fn insert_placeholder_position(
@@ -928,8 +1609,18 @@ fn insert_placeholder_position(
     if let Some(idx) = key.idx.as_deref() {
         positions.retain(|candidate, _| candidate.idx.as_deref() != Some(idx));
     }
-
     positions.insert(key, position);
+}
+
+fn insert_placeholder_list_styles(
+    list_styles: &mut HashMap<PlaceholderKey, HashMap<u32, ListKind>>,
+    key: PlaceholderKey,
+    styles: HashMap<u32, ListKind>,
+) {
+    if let Some(idx) = key.idx.as_deref() {
+        list_styles.retain(|candidate, _| candidate.idx.as_deref() != Some(idx));
+    }
+    list_styles.insert(key, styles);
 }
 
 #[cfg(test)]

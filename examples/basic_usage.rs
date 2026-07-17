@@ -33,6 +33,6 @@ fn main() -> Result<()> {
     let markdown = container.convert_to_md()?;
 
     fs::write("output.md", markdown)?;
-    println!("Converted {:?} presentation to {}", container.format(), "output.md");
+    println!("Converted {:?} presentation to output.md", container.format());
     Ok(())
 }

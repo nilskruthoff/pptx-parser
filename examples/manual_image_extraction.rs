@@ -4,8 +4,8 @@
 //!
 //! Run with: cargo run --example manual_image_extraction <path/to/your/presentation.pptx>
 
-use base64::engine::general_purpose;
 use base64::Engine;
+use base64::engine::general_purpose;
 use pptx_to_md::{ImageHandlingMode, ParserConfig, PptxContainer, Result};
 use std::fs::File;
 use std::io::Write;
@@ -52,9 +52,7 @@ fn main() -> Result<()> {
 
     // Convert each slide to Markdown and save
     for slide in slides {
-        if let Some(md_content) = slide.convert_to_md() {
-            writeln!(md_file, "{}", md_content).expect("Couldn't write to file");
-        }
+        writeln!(md_file, "{}", slide.convert_to_md()?).expect("Couldn't write to file");
 
         // Manually load the base64 encoded image strings from the slide
         if let Some(images) = slide.load_images_manually() {

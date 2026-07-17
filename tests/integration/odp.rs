@@ -88,11 +88,12 @@ fn parses_odp_tables_lists_and_text_formatting() {
             _ => None,
         })
         .unwrap();
-    assert!(text
-        .0
-        .runs
-        .iter()
-        .any(|run| run.text.contains("Bold text") && run.formatting.bold));
+    assert!(
+        text.0
+            .runs
+            .iter()
+            .any(|run| run.text.contains("Bold text") && run.formatting.bold)
+    );
     assert_eq!(text.1.x, 360_000);
     assert_eq!(text.1.y, 720_000);
 
@@ -189,4 +190,156 @@ fn extracts_and_embeds_the_image_on_slide_seven() {
     let markdown = slide.convert_to_md().expect("render image slide");
     assert!(markdown.contains("data:image/"));
     assert!(markdown.contains(&expected_base64));
+}
+
+#[test]
+fn presentation_container_exercises_odp_detection_and_wrapper_paths() {
+    let path = odp_fixture_path();
+    let config = ParserConfig::builder().extract_images(false).build();
+
+    let detected = PresentationContainer::open(&path, config.clone()).expect("detect ODP fixture");
+    assert_eq!(detected.format(), PresentationFormat::Odp);
+    let _metadata = detected.metadata();
+
+    let mut parallel = PresentationContainer::open(&path, config.clone()).expect("open ODP");
+    let slides = parallel
+        .parse_all_multi_threaded()
+        .expect("parse ODP through parallel-compatible API");
+    assert!(!slides.is_empty());
+
+    let mut converted = PresentationContainer::open(&path, config.clone()).expect("open ODP");
+    let markdown = converted.convert_to_md().expect("convert ODP");
+    assert!(!markdown.is_empty());
+
+    let mut converted_parallel =
+        PresentationContainer::open(&path, config.clone()).expect("open ODP");
+    assert_eq!(
+        converted_parallel
+            .convert_to_md_multi_threaded()
+            .expect("convert ODP through parallel-compatible API"),
+        markdown
+    );
+
+    let mut streamed = PresentationContainer::open(&path, config).expect("open ODP");
+    let mut iterator = streamed.iter_slides();
+    let mut streamed_count = 0;
+    for slide in iterator.by_ref() {
+        slide.expect("stream ODP slide");
+        streamed_count += 1;
+    }
+    assert_eq!(streamed_count, slides.len());
+    assert!(iterator.next().is_none());
+}
+
+#[test]
+fn rejects_an_archive_with_an_unknown_presentation_format() {
+    let path = temporary_odp_path("unsupported-format");
+    create_presentation_archive(
+        &path,
+        vec![("unrelated.txt".to_string(), b"not a presentation".to_vec())],
+    );
+
+    let result = PresentationContainer::open(&path, ParserConfig::default());
+
+    assert!(matches!(
+        result,
+        Err(pptx_to_md::Error::ParseError(
+            "Unsupported presentation format"
+        ))
+    ));
+    fs::remove_file(path).expect("remove unsupported presentation fixture");
+}
+
+fn normalize_semantic_markdown(markdown: &str) -> String {
+    let mut normalized = String::new();
+    let mut previous_blank = false;
+    for line in markdown.lines().map(str::trim_end) {
+        let blank = line.is_empty();
+        if blank && previous_blank {
+            continue;
+        }
+        normalized.push_str(line);
+        normalized.push('\n');
+        previous_blank = blank;
+    }
+    normalized.trim().to_string()
+}
+
+#[test]
+fn equivalent_pptx_and_odp_slides_produce_equivalent_semantic_markdown() {
+    let pptx_path = temporary_odp_path("semantic-parity-pptx");
+    let pptx_slide = br#"<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><p:cSld><p:spTree><p:sp><p:nvSpPr><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:r><a:t>Shared title</a:t></a:r></a:p></p:txBody></p:sp><p:sp><p:nvSpPr><p:nvPr><p:ph type="body"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:pPr><a:buChar char="-"/></a:pPr><a:r><a:t>Shared item</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"#;
+    create_presentation_archive(
+        &pptx_path,
+        vec![
+            ("[Content_Types].xml".to_string(), b"<Types/>".to_vec()),
+            (
+                "ppt/presentation.xml".to_string(),
+                b"<p:presentation/>".to_vec(),
+            ),
+            ("ppt/slides/slide1.xml".to_string(), pptx_slide.to_vec()),
+        ],
+    );
+
+    let odp_path = temporary_odp_path("semantic-parity-odp");
+    let odp_content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"><office:body><office:presentation><draw:page><draw:frame presentation:class="title"><draw:text-box><text:p>Shared title</text:p></draw:text-box></draw:frame><draw:frame presentation:class="body"><draw:text-box><text:list><text:list-item><text:p>Shared item</text:p></text:list-item></text:list></draw:text-box></draw:frame></draw:page></office:presentation></office:body></office:document-content>"#;
+    create_presentation_archive(
+        &odp_path,
+        vec![
+            (
+                "mimetype".to_string(),
+                b"application/vnd.oasis.opendocument.presentation".to_vec(),
+            ),
+            ("content.xml".to_string(), odp_content.to_vec()),
+        ],
+    );
+
+    let config = ParserConfig::builder().extract_images(false).build();
+    let mut pptx =
+        PresentationContainer::open_as(&pptx_path, config.clone(), PresentationFormat::Pptx)
+            .unwrap();
+    let mut odp =
+        PresentationContainer::open_as(&odp_path, config, PresentationFormat::Odp).unwrap();
+
+    let pptx_markdown = normalize_semantic_markdown(&pptx.convert_to_md().unwrap());
+    let odp_markdown = normalize_semantic_markdown(&odp.convert_to_md().unwrap());
+    assert_eq!(pptx_markdown, odp_markdown);
+
+    fs::remove_file(pptx_path).unwrap();
+    fs::remove_file(odp_path).unwrap();
+}
+
+#[test]
+fn semantic_document_reports_missing_resources_without_losing_the_slide() {
+    let path = temporary_odp_path("missing-image-diagnostic");
+    let content = br#"<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:xlink="http://www.w3.org/1999/xlink"><office:body><office:presentation><draw:page><draw:frame draw:name="Missing diagram"><draw:image xlink:href="Pictures/missing.png"/></draw:frame></draw:page></office:presentation></office:body></office:document-content>"#;
+    create_presentation_archive(
+        &path,
+        vec![
+            (
+                "mimetype".to_string(),
+                b"application/vnd.oasis.opendocument.presentation".to_vec(),
+            ),
+            ("content.xml".to_string(), content.to_vec()),
+        ],
+    );
+
+    let mut container = PresentationContainer::open(&path, ParserConfig::default()).unwrap();
+    let document = container.parse_document().unwrap();
+
+    assert_eq!(document.slides.len(), 1);
+    assert_eq!(document.diagnostics.len(), 1);
+    assert!(
+        document.diagnostics[0]
+            .message
+            .contains("Image resource could not be loaded")
+    );
+    assert!(
+        document.slides[0]
+            .convert_to_md()
+            .unwrap()
+            .contains("[Image unavailable: Missing diagram]")
+    );
+
+    fs::remove_file(path).unwrap();
 }
