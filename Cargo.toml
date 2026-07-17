@@ -1,6 +1,6 @@
 [package]
 name = "pptx-to-md"
-version = "0.5.1"
+version = "1.0.0"
 edition = "2024"
 description = "Parse Microsoft PowerPoint files (.pptx) and OpenDocument Presentations (.odp) into Markdown (.md)"
 readme = "README.md"
@@ -11,6 +11,7 @@ categories = ["text-processing", "parser-implementations"]
 include = [
     "/src/**",
     "/examples/**",
+    "/CHANGELOG.md",
     "/README.md",
     "/LICENCE-MIT",
     "/LICENSE-APACHE",
