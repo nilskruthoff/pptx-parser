@@ -4,6 +4,7 @@
 ![License](https://img.shields.io/crates/l/pptx-to-md.svg)
 [![dependency status](https://deps.rs/repo/github/nilskruthoff/pptx-parser/status.svg)](https://deps.rs/repo/github/nilskruthoff/pptx-parser)
 [![Documentation](https://docs.rs/pptx-to-md/badge.svg)](https://docs.rs/pptx-to-md)
+![Crates.io Downloads](https://img.shields.io/crates/d/pptx-to-md)
 
 # pptx-to-md
 
@@ -60,6 +61,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 a complete PPTX or ODP document. It emits presentation metadata once at the
 start and then appends all slide Markdown in order. The existing `parse_all()`,
 streaming, and per-slide APIs remain available for structured processing.
+
+### Semantic document model
+
+`PresentationContainer::parse_document()` returns a **semantic** `Presentation`
+containing metadata, slides, and non-fatal parser diagnostics. Each slide exposes
+ordered `blocks` with bounds and source order. Text blocks preserve title/body
+roles, individual paragraphs, list metadata, run formatting, and hyperlinks;
+tables preserve merged-cell information and images retain alternative text.
+
+For custom Markdown behavior, call `Slide::to_markdown(&MarkdownOptions)`.
+`ReadingOrder::Spatial` is the default and groups content by visual columns;
+`ReadingOrder::Source` preserves the package's source order. Per-slide
+`convert_to_md()` now returns `Result<String>` so image and filesystem failures
+cannot be discarded silently.
+
+See [Semantic presentation-to-Markdown conversion](docs/SEMANTIC_MARKDOWN_CONVERSION.md)
+for the architecture, migration notes, test coverage, and known limitations of
+the pull-parser and semantic-model changes.
 
 To access metadata as structured Rust values without converting slides, see
 [`examples/presentation_metadata.rs`](https://github.com/nilskruthoff/pptx-parser/tree/master/examples/presentation_metadata.rs).
