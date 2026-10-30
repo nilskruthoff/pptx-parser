@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- `Error::Zip` now wraps the `ZipError` of `zip` 9 instead of `zip` 8
+- `zip` now only enables the deflate compression, which PPTX and ODP files
+  use. This drops the dependencies for AES, bzip2, LZMA, PPMd, Zstandard,
+  and Deflate64
+
+### Security
+
+- Upgraded `zip` from 8.6.0 to 9.0.5, which fixes the advisories
+  GHSA-m665-v7pm-7grj, GHSA-q7v9-x93c-xqv3, GHSA-8hxf-qr8p-62x4,
+  GHSA-hjqx-j4rw-g7xv, and GHSA-9hj8-73fh-9963
+
 ## [1.0.0] - 2026-07-17
 
 ### Added
