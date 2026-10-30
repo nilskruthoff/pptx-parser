@@ -5,14 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.0] - 2026-10-30
 
 ### Changed
 
-- `Error::Zip` now wraps the `ZipError` of `zip` 9 instead of `zip` 8
+- **Breaking:** `Error::Zip` now wraps the new opaque `pptx_to_md::ZipError`
+  instead of `zip::result::ZipError`, and `Error` no longer implements
+  `From<zip::result::ZipError>`. The underlying `zip` error is still available
+  through `std::error::Error::source`. Future `zip` upgrades therefore no
+  longer change the public API
+- **Breaking:** The `source` field of `Error::Xml` is now the new opaque
+  `pptx_to_md::XmlError` instead of `quick_xml::Error`. The underlying
+  `quick-xml` error is still available through `std::error::Error::source`, so
+  future `quick-xml` upgrades no longer change the public API
 - `zip` now only enables the deflate compression, which PPTX and ODP files
   use. This drops the dependencies for AES, bzip2, LZMA, PPMd, Zstandard,
   and Deflate64
+
+### Fixed
+
+- Fixed broken intra-doc links and malformed code blocks in the API
+  documentation, including the `PptxContainer::load_slide` example
 
 ### Security
 
