@@ -12,7 +12,9 @@ fn main() -> Result<()> {
     let pptx_path = if args.len() > 1 {
         &args[1]
     } else {
-        eprintln!("Usage: cargo run --example basic_usage <presentation.pptx|presentation.odp> <extract_images>\ncargo run --example basic_usage sample.pptx true");
+        eprintln!(
+            "Usage: cargo run --example basic_usage <presentation.pptx|presentation.odp> <extract_images>\ncargo run --example basic_usage sample.pptx true"
+        );
         return Ok(());
     };
 
@@ -33,6 +35,9 @@ fn main() -> Result<()> {
     let markdown = container.convert_to_md()?;
 
     fs::write("output.md", markdown)?;
-    println!("Converted {:?} presentation to output.md", container.format());
+    println!(
+        "Converted {:?} presentation to output.md",
+        container.format()
+    );
     Ok(())
 }

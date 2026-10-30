@@ -1,6 +1,8 @@
 use crate::container::SlideIterator;
 use crate::odp::{OdpContainer, OdpSlideIterator};
-use crate::{ParserConfig, PptxContainer, Presentation, PresentationMetadata, Result, Slide};
+use crate::{
+    Error, ParserConfig, PptxContainer, Presentation, PresentationMetadata, Result, Slide,
+};
 use std::io::Read;
 use std::path::Path;
 
@@ -120,7 +122,7 @@ impl PresentationContainer {
 
 fn detect_format(path: &Path) -> Result<PresentationFormat> {
     let file = std::fs::File::open(path)?;
-    let mut archive = zip::ZipArchive::new(file)?;
+    let mut archive = zip::ZipArchive::new(file).map_err(Error::zip)?;
 
     if let Ok(mut mimetype) = archive.by_name("mimetype") {
         let mut value = String::new();
