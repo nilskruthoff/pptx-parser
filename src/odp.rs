@@ -37,7 +37,7 @@ pub(crate) struct OdpContainer {
 impl OdpContainer {
     pub(crate) fn open(path: &Path, config: ParserConfig) -> Result<Self> {
         let file = std::fs::File::open(path)?;
-        let mut archive = zip::ZipArchive::new(file)?;
+        let mut archive = zip::ZipArchive::new(file).map_err(Error::zip)?;
         let content = read_archive_file(&mut archive, "content.xml")?;
         let style_xml = read_archive_file(&mut archive, "styles.xml").unwrap_or_default();
         let meta = read_optional_archive_file(&mut archive, "meta.xml")?;
@@ -141,7 +141,7 @@ impl Iterator for OdpSlideIterator<'_> {
 }
 
 fn read_archive_file(archive: &mut zip::ZipArchive<std::fs::File>, path: &str) -> Result<Vec<u8>> {
-    let mut file = archive.by_name(path)?;
+    let mut file = archive.by_name(path).map_err(Error::zip)?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
     Ok(bytes)
@@ -154,7 +154,7 @@ fn read_optional_archive_file(
     let mut file = match archive.by_name(path) {
         Ok(file) => file,
         Err(zip::result::ZipError::FileNotFound) => return Ok(None),
-        Err(error) => return Err(error.into()),
+        Err(error) => return Err(Error::zip(error)),
     };
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;

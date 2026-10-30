@@ -13,10 +13,9 @@ pub(crate) fn reader(data: &[u8]) -> XmlReader<'_> {
 }
 
 pub(crate) fn event<'a>(reader: &mut XmlReader<'a>, part: &str) -> Result<Event<'a>> {
-    reader.read_event().map_err(|source| Error::Xml {
-        part: part.to_string(),
-        source,
-    })
+    reader
+        .read_event()
+        .map_err(|source| Error::xml(part, source))
 }
 
 pub(crate) fn local(name: &[u8]) -> &[u8] {
@@ -54,20 +53,14 @@ pub(crate) fn attr(element: &BytesStart<'_>, wanted: &[u8]) -> Option<String> {
 }
 
 pub(crate) fn text(event: &BytesText<'_>, part: &str) -> Result<String> {
-    let decoded = event.decode().map_err(|source| Error::Xml {
-        part: part.to_string(),
-        source: source.into(),
-    })?;
+    let decoded = event.decode().map_err(|source| Error::xml(part, source))?;
     Ok(quick_xml::escape::unescape(&decoded)
         .map(Cow::into_owned)
         .unwrap_or_else(|_| decoded.into_owned()))
 }
 
 pub(crate) fn reference(event: &BytesRef<'_>, part: &str) -> Result<String> {
-    let decoded = event.decode().map_err(|source| Error::Xml {
-        part: part.to_string(),
-        source: source.into(),
-    })?;
+    let decoded = event.decode().map_err(|source| Error::xml(part, source))?;
     let escaped = format!("&{decoded};");
     Ok(quick_xml::escape::unescape(&escaped)
         .map(Cow::into_owned)
