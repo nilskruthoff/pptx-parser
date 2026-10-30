@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `Error::Zip` now wraps the `ZipError` of `zip` 9 instead of `zip` 8
+- `zip` now only enables the deflate compression, which PPTX and ODP files
+  use. This drops the dependencies for AES, bzip2, LZMA, PPMd, Zstandard,
+  and Deflate64
 
 ### Security
 

@@ -42,7 +42,7 @@ name = "slide_elements"
 path = "examples/slide_elements.rs"
 
 [dependencies]
-zip = "9.0.5"
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 quick-xml = "0.41.0"
 thiserror = "2.0.18"
 base64 = "0.22.1"
