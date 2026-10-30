@@ -56,7 +56,7 @@ impl PptxContainer {
 
         for i in 0..archive.len() {
             let file = archive.by_index(i)?;
-            let name = file.name().to_string();
+            let name = file.name()?.to_string();
 
             if name.starts_with("ppt/slides/slide") && name.ends_with(".xml") {
                 slide_paths.push(name);
