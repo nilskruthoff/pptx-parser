@@ -1,4 +1,4 @@
-use super::{Result, Slide};
+use super::{Error, Result, Slide};
 use crate::PresentationMetadata;
 use crate::constants::{
     COMMENTS_NAMESPACE, NOTES_SLIDE_NAMESPACE, SLIDE_LAYOUT_NAMESPACE, SLIDE_MASTER_NAMESPACE,
@@ -28,7 +28,7 @@ impl PptxContainer {
     /// Opens a PowerPoint pptx file and initializes a `PptxContainer`.
     ///
     /// _For new code that should support both `.pptx` and `.odp`, prefer
-    /// [`PresentationContainer`]. This type remains available for PPTX-only
+    /// [`PresentationContainer`](crate::PresentationContainer). This type remains available for PPTX-only
     /// workflows and backwards compatibility._
     ///
     /// Processes the given file, extracting its internal files into memory. After initialization, the
@@ -49,14 +49,14 @@ impl PptxContainer {
     /// Errors are returned on file access problems or failures during the unzipping process.
     pub fn open(path: &Path, config: ParserConfig) -> Result<Self> {
         let file = std::fs::File::open(path)?;
-        let mut archive = zip::ZipArchive::new(file)?;
+        let mut archive = zip::ZipArchive::new(file).map_err(Error::zip)?;
 
         let mut slide_paths: Vec<String> = Vec::new();
         let mut slide_count = 0;
 
         for i in 0..archive.len() {
-            let file = archive.by_index(i)?;
-            let name = file.name()?.to_string();
+            let file = archive.by_index(i).map_err(Error::zip)?;
+            let name = file.name().map_err(Error::zip)?.to_string();
 
             if name.starts_with("ppt/slides/slide") && name.ends_with(".xml") {
                 slide_paths.push(name);
@@ -249,25 +249,30 @@ impl PptxContainer {
         SlideIterator::new(self)
     }
 
-    /// Loads a slide from the PPTX file by its index.
+    /// Loads a slide from the PPTX file by its internal path.
     ///
     /// # Arguments
     ///
-    /// * `index` - The zero-based index of the slide to load.
+    /// * `slide_path` - The internal path of the slide, as listed in `slide_paths`.
     ///
     /// # Returns
     ///
     /// * `Ok(Some(Slide))` - The parsed slide if found and successfully processed.
-    /// * `Ok(None)` - If the index is out of bounds.
+    /// * `Ok(None)` - Currently never returned; kept for API compatibility.
     /// * `Err(_)` - If there was an error loading or parsing the slide.
     ///
     /// # Example
     ///
-    /// ```
-    /// // let mut streamer = open(Path::new("presentation.pptx"))?;
-    /// // if let Ok(Some(slide)) = streamer.load_slide(0) {
-    ///     // println!("Loaded first slide: {}", slide.slide_number);
-    /// // }
+    /// ```no_run
+    /// use pptx_to_md::{ParserConfig, PptxContainer};
+    /// use std::path::Path;
+    ///
+    /// let mut container = PptxContainer::open(Path::new("presentation.pptx"), ParserConfig::default())?;
+    /// let slide_path = container.slide_paths[0].clone();
+    /// if let Some(slide) = container.load_slide(&slide_path)? {
+    ///     println!("Loaded first slide: {}", slide.slide_number);
+    /// }
+    /// # Ok::<(), pptx_to_md::Error>(())
     /// ```
     pub fn load_slide(&mut self, slide_path: &str) -> Result<Option<Slide>> {
         // load xml data
@@ -353,7 +358,7 @@ impl PptxContainer {
     /// This is an internal method used to extract individual files from the
     /// PPTX archive (which is essentially a ZIP file).
     pub fn read_file_from_archive(&mut self, path: &str) -> Result<Vec<u8>> {
-        let mut file = self.archive.by_name(path)?;
+        let mut file = self.archive.by_name(path).map_err(Error::zip)?;
         let mut content = Vec::new();
         file.read_to_end(&mut content)?;
         Ok(content)
@@ -371,9 +376,9 @@ impl PptxContainer {
     ///
     /// # Example
     ///
+    /// ```text
+    /// ppt/slides/slide1.xml -> ppt/slides/_rels/slide1.xml.rels
     /// ```
-    /// // For a slide path "ppt/slides/slide1.xml"
-    /// // Returns "ppt/slides/_rels/slide1.xml.rels"
     pub fn get_slide_rels_path(&self, slide_path: &str) -> String {
         let mut rels_path = slide_path.to_string();
         if let Some(pos) = rels_path.rfind('/') {
@@ -514,7 +519,7 @@ fn read_optional_archive_file(
     let mut file = match archive.by_name(path) {
         Ok(file) => file,
         Err(zip::result::ZipError::FileNotFound) => return Ok(None),
-        Err(error) => return Err(error.into()),
+        Err(error) => return Err(Error::zip(error)),
     };
     let mut content = Vec::new();
     file.read_to_end(&mut content)?;

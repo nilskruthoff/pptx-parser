@@ -78,7 +78,6 @@ fn push_relationship(element: &quick_xml::events::BytesStart<'_>, out: &mut Vec<
 /// An error is returned if:
 /// - The XML data is not valid UTF-8.
 /// - Malformed or invalid XML structure is detected.
-/// ```
 pub fn parse_slide_rels(xml_data: &[u8]) -> Result<Vec<ImageReference>> {
     Ok(parse_relationships(xml_data)?
         .into_iter()

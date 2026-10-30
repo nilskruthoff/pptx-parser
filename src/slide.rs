@@ -34,7 +34,7 @@ impl ManualImage {
 /// A `Slide` can be converted into other formats, such as Markdown, or its
 /// contained images can be extracted in base64 representation.
 ///
-/// Typically, you retrieve instances of `Slide` through [`PptxContainer::parse()`].
+/// Typically, you retrieve instances of `Slide` through [`PresentationContainer::parse_all()`](crate::PresentationContainer::parse_all).
 #[derive(Debug)]
 pub struct Slide {
     pub rel_path: String,
